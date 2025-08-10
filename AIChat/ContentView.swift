@@ -7,18 +7,21 @@
 
 import SwiftUI
 
-struct ContentView: View {
+struct StartView: View {
+    @State private var apiKey: String = UserDefaults.standard.string(forKey: "apiKey") ?? ""
+    @State private var isKeyValid = false
+    
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        NavigationStack {
+            if isKeyValid {
+                ChatView(apiKey: apiKey)
+            } else {
+                APIKeyView(apiKey: $apiKey, isValid: $isKeyValid)
+            }
         }
-        .padding()
     }
 }
 
 #Preview {
-    ContentView()
+    StartView()
 }
