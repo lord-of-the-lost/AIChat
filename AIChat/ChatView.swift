@@ -67,7 +67,15 @@ struct ChatView: View {
         
         Task {
             if let reply = await service.sendMessage(messages: messages) {
-                messages.append(ChatMessage(content: reply, isUser: false))
+                let displayText: String
+                if reply.isSuccess {
+                    displayText = reply.content.map { "\($0.key): \($0.value)" }
+                                                .joined(separator: "\n")
+                } else {
+                    displayText = "Ошибка: \(reply.error ?? "Неизвестная ошибка")"
+                }
+                
+                messages.append(ChatMessage(content: displayText, isUser: false))
             }
             isLoading = false
         }
