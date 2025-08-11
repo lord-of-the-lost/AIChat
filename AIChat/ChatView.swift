@@ -26,10 +26,7 @@ struct ChatView: View {
                                 .background(Color.blue.opacity(0.2))
                                 .cornerRadius(8)
                         } else {
-                            Markdown(message.content)
-                                .padding()
-                                .background(Color.gray.opacity(0.1))
-                                .cornerRadius(8)
+                            JSONTextView(jsonString: message.content)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
@@ -67,15 +64,13 @@ struct ChatView: View {
         
         Task {
             if let reply = await service.sendMessage(messages: messages) {
-                let displayText: String
-                if reply.isSuccess {
-                    displayText = reply.content.map { "\($0.key): \($0.value)" }
-                                                .joined(separator: "\n")
+                // Преобразуем StructuredResponse → JSON-строку
+                if let jsonData = try? JSONEncoder().encode(reply),
+                   let jsonString = String(data: jsonData, encoding: .utf8) {
+                    messages.append(ChatMessage(content: jsonString, isUser: false))
                 } else {
-                    displayText = "Ошибка: \(reply.error ?? "Неизвестная ошибка")"
+                    messages.append(ChatMessage(content: "{\"isSuccess\":false,\"content\":{},\"error\":\"Ошибка кодирования JSON\"}", isUser: false))
                 }
-                
-                messages.append(ChatMessage(content: displayText, isUser: false))
             }
             isLoading = false
         }
