@@ -34,11 +34,27 @@ final class ChatService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
+        let systemPrompt = """
+        You are an expert iOS development mentor.
+        Your task:
+        1. First, gather information about the user's current level of iOS development skills, tools they have used, and challenges they face.
+        2. Ask clarifying questions one at a time, wait for the answer before asking the next.
+        3. When you have enough information, stop asking questions automatically.
+        4. When you stop, provide a detailed iOS learning roadmap as your final answer.
+        5. The roadmap should be clear, structured, and sequential, including key topics, learning order, and practical advice.
+        6. Avoid giving the roadmap until you have enough context from the user.
+        Result: The output should be a detailed iOS learning roadmap tailored to the user's experience and needs. Optionally, you may provide the collected information in a format that could be used for a technical specification, as an example.
+        """
+
+        var allMessages: [[String: String]] = []
+        allMessages.append(["role": "system", "content": systemPrompt])
+        allMessages.append(contentsOf: messages.map {
+            ["role": $0.isUser ? "user" : "assistant", "content": $0.content]
+        })
+        
         let payload: [String: Any] = [
             "model": "gpt-3.5-turbo",
-            "messages": messages.map {
-                ["role": $0.isUser ? "user" : "assistant", "content": $0.content]
-            }
+            "messages": allMessages
         ]
         
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
