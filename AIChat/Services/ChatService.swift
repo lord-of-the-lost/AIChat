@@ -7,10 +7,29 @@
 
 import Foundation
 
+protocol AIService {
+    func sendMessage(messages: [ChatMessage]) async -> String?
+}
+
 final class ChatService {
+    private let developerAgent: AIService
+    private let reviewerAgent: AIService
     private let apiKey: String
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
-    init(apiKey: String) { self.apiKey = apiKey }
+    
+    init(apiKey: String) {
+        self.apiKey = apiKey
+        self.developerAgent = DeveloperAgent(baseURL: baseURL, apiKey: apiKey)
+        self.reviewerAgent = ReviewerAgent(baseURL: baseURL, apiKey: apiKey)
+    }
+    
+    func sendToDeveloper(_ messages: [ChatMessage]) async -> String? {
+        await developerAgent.sendMessage(messages: messages)
+    }
+    
+    func sendToReviewer(_ messages: [ChatMessage]) async -> String? {
+        await reviewerAgent.sendMessage(messages: messages)
+    }
     
     func validateKey() async -> Bool {
         guard let url = URL(string: baseURL + "models") else { return false }
@@ -27,6 +46,34 @@ final class ChatService {
         return false
     }
     
+    /// Вызывает сначала разработчика, потом ревьюера
+    func sendSequentially(_ messages: [ChatMessage]) async -> [ChatMessage] {
+        var updatedMessages = messages
+        
+        if let devReply = await sendToDeveloper(updatedMessages) {
+            let devMessage = ChatMessage(author: .gptDeveloper, content: devReply, isUser: false)
+            updatedMessages.append(devMessage)
+            
+            if let reviewReply = await sendToReviewer(updatedMessages) {
+                let reviewMessage = ChatMessage(author: .gptReviewer, content: reviewReply, isUser: false)
+                updatedMessages.append(reviewMessage)
+            }
+        }
+        
+        return updatedMessages
+    }
+}
+
+// MARK: - Agent 1
+final class DeveloperAgent: AIService {
+    private let apiKey: String
+    private let baseURL: String
+    
+    init(baseURL: String, apiKey: String) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+    }
+    
     func sendMessage(messages: [ChatMessage]) async -> String? {
         guard let url = URL(string: baseURL + "chat/completions") else { return nil }
         var request = URLRequest(url: url)
@@ -35,22 +82,38 @@ final class ChatService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
         let systemPrompt = """
-        You are an expert iOS development mentor.
-        Your task:
-        1. First, gather information about the user's current level of iOS development skills, tools they have used, and challenges they face.
-        2. Ask clarifying questions one at a time, wait for the answer before asking the next.
-        3. When you have enough information, stop asking questions automatically.
-        4. When you stop, provide a detailed iOS learning roadmap as your final answer.
-        5. The roadmap should be clear, structured, and sequential, including key topics, learning order, and practical advice.
-        6. Avoid giving the roadmap until you have enough context from the user.
-        Result: The output should be a detailed iOS learning roadmap tailored to the user's experience and needs. Optionally, you may provide the collected information in a format that could be used for a technical specification, as an example.
+        You are an experienced iOS developer working on a design system.
+        
+        LANGUAGE RULES:
+        - All communication (interview questions, clarifications, explanations) MUST be in Russian.
+        - The full text of the technical specification inside <TECH_SPEC> MUST also be entirely in Russian (no English, except variable/class names).
+        - Any code snippets MUST be in English.
+        
+        COMMUNICATION PROTOCOL (MANDATORY):
+        - While interviewing, your response MUST start with exactly "<STATE: INTERVIEW>" on the first line,
+          then ask exactly ONE concise question to gather requirements for a new UI component.
+        - When you have enough information to compile a complete technical specification (TS),
+          your response MUST start with exactly "<STATE: SPEC_READY>" on the first line,
+          and then include the final spec wrapped strictly like:
+          <TECH_SPEC>
+          ... full and final TS ...
+          </TECH_SPEC>
+        
+        Interview goals:
+        - Clarify: component name, purpose/use cases, required props/configurations, styling rules,
+          accessibility requirements, edge cases, platform constraints, integration points.
+        
+        Rules:
+        - Ask one question at a time during INTERVIEW state.
+        - Do NOT provide code.
+        - Do NOT switch back to INTERVIEW after SPEC_READY.
+        - Never include both states in one message.
+        - Keep the spec clear and implementation-ready.
         """
-
-        var allMessages: [[String: String]] = []
-        allMessages.append(["role": "system", "content": systemPrompt])
-        allMessages.append(contentsOf: messages.map {
-            ["role": $0.isUser ? "user" : "assistant", "content": $0.content]
-        })
+        
+        let allMessages: [[String: String]] =
+        [["role": "system", "content": systemPrompt]] +
+        messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
         
         let payload: [String: Any] = [
             "model": "gpt-3.5-turbo",
@@ -58,26 +121,96 @@ final class ChatService {
         ]
         
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        
+        return await performRequest(request: request)
+    }
+    
+    private func performRequest(request: URLRequest) async -> String? {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
-            
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
-                print("❌ Ошибка API: \(httpResponse.statusCode)")
-                print(String(data: data, encoding: .utf8) ?? "нет данных")
-                return "Ошибка: \(httpResponse.statusCode)"
-            }
-            
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                print("📩 Ответ API:", json)
-                if let choices = json["choices"] as? [[String: Any]],
-                   let message = choices.first?["message"] as? [String: Any],
-                   let content = message["content"] as? String {
-                    return content.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any],
+               let content = message["content"] as? String {
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         } catch {
-            print("Ошибка запроса:", error)
+            print("❌ Agent1 Error:", error)
+        }
+        return nil
+    }
+}
+
+// MARK: - Agent 2
+final class ReviewerAgent: AIService {
+    private let apiKey: String
+    private let baseURL: String
+    
+    init(baseURL: String, apiKey: String) {
+        self.baseURL = baseURL
+        self.apiKey = apiKey
+    }
+    
+    func sendMessage(messages: [ChatMessage]) async -> String? {
+        guard let url = URL(string: baseURL + "chat/completions") else { return nil }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let systemPrompt = """
+        ROLE: ReviewerAgent
+        PURPOSE: Review the technical specification <TECH_SPEC> prepared by DeveloperAgent.
+
+        RULES:
+        - Input: A dialogue history that MUST contain a <TECH_SPEC> block.
+        - If <TECH_SPEC> is missing, malformed, or empty:
+          1. Respond ONLY with:
+             <STATE: REVIEW_ERROR>
+             Причина: <кратко на русском, что пошло не так>
+          2. Do NOT attempt to generate code or assumptions in this case.
+        - If <TECH_SPEC> exists but is incomplete or unclear:
+          1. Respond with:
+             <STATE: REVIEW_REQUEST>
+             Комментарии: <список уточнений или недостающих деталей на русском>
+        - If <TECH_SPEC> is complete and clear:
+          1. Respond with:
+             <STATE: REVIEW_READY>
+             <REVIEW_RESULT>
+             ...текст ревью и/или код...
+             </REVIEW_RESULT>
+
+        LANGUAGE RULES:
+        - All non-code text must be in Russian.
+        - Code examples must be in English.
+        - Never return an empty message. Always include a state tag and some content.
+        """
+        
+        let allMessages: [[String: String]] =
+        [["role": "system", "content": systemPrompt]] +
+        messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
+        
+        let payload: [String: Any] = [
+            "model": "gpt-3.5-turbo",
+            "messages": allMessages
+        ]
+        
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        return await performRequest(request: request)
+    }
+    
+    private func performRequest(request: URLRequest) async -> String? {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any],
+               let content = message["content"] as? String {
+                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        } catch {
+            print("❌ Agent2 Error:", error)
         }
         return nil
     }

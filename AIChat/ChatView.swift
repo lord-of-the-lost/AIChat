@@ -9,17 +9,21 @@ import SwiftUI
 import MarkdownUI
 
 struct ChatView: View {
-    let apiKey: String
-    @State private var messages: [ChatMessage] = []
-    @State private var inputText = ""
-    @State private var isLoading = false
-    private var service: ChatService { ChatService(apiKey: apiKey) }
+    @StateObject private var viewModel: ChatViewModel
+    
+    init(apiKey: String) {
+        _viewModel = StateObject(wrappedValue: ChatViewModel(apiKey: apiKey))
+    }
     
     var body: some View {
         VStack {
             ScrollView {
-                ForEach(messages) { message in
+                ForEach(viewModel.messages) { message in
                     VStack(alignment: message.isUser ? .trailing : .leading) {
+                        Text(message.author.rawValue)
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
                         if message.isUser {
                             Text(message.content)
                                 .padding()
@@ -36,40 +40,26 @@ struct ChatView: View {
                     .padding(.vertical, 2)
                 }
                 
-                if isLoading {
+                if viewModel.isLoading {
                     HStack {
                         ProgressView()
-                        Text("Модель печатает…")
+                        Text(viewModel.currentAgent == .gptDeveloper ? "Developer думает…" : "Reviewer думает…")
                     }
                     .padding()
                 }
             }
             
             HStack {
-                TextField("Ваш вопрос...", text: $inputText)
+                TextField("Ваш вопрос...", text: $viewModel.inputText)
                     .textFieldStyle(.roundedBorder)
                 
                 Button("Отправить") {
-                    sendMessage()
+                    viewModel.sendUserMessage()
                 }
-                .disabled(inputText.isEmpty || isLoading)
+                .disabled(viewModel.inputText.isEmpty || viewModel.isLoading)
             }
             .padding()
         }
-        .navigationTitle("Чат с GPT")
-    }
-    
-    func sendMessage() {
-        let userMessage = ChatMessage(content: inputText, isUser: true)
-        messages.append(userMessage)
-        inputText = ""
-        isLoading = true
-        
-        Task {
-            if let reply = await service.sendMessage(messages: messages) {
-                messages.append(ChatMessage(content: reply, isUser: false))
-            }
-            isLoading = false
-        }
+        .navigationTitle("Чат с агентами")
     }
 }

@@ -9,6 +9,8 @@ import Foundation
 
 struct ChatMessage: Identifiable {
     let id = UUID()
+    let author: Agent
     let content: String
     let isUser: Bool
 }
+
