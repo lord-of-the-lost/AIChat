@@ -14,13 +14,20 @@ protocol AIService {
 final class ChatService {
     private let developerAgent: AIService
     private let reviewerAgent: AIService
+    private let mcpGitHubAgent: MCPGitHubAgent?
     private let apiKey: String
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
     
-    init(apiKey: String) {
+    init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
         self.developerAgent = DeveloperAgent(baseURL: baseURL, apiKey: apiKey)
         self.reviewerAgent = ReviewerAgent(baseURL: baseURL, apiKey: apiKey)
+        
+        if let githubToken = githubToken, !githubToken.isEmpty {
+            self.mcpGitHubAgent = MCPGitHubAgent(baseURL: baseURL, apiKey: apiKey, githubToken: githubToken)
+        } else {
+            self.mcpGitHubAgent = nil
+        }
     }
     
     func sendToDeveloper(_ messages: [ChatMessage]) async -> String? {
@@ -29,6 +36,31 @@ final class ChatService {
     
     func sendToReviewer(_ messages: [ChatMessage]) async -> String? {
         await reviewerAgent.sendMessage(messages: messages)
+    }
+    
+    func sendToMCPGitHub(_ messages: [ChatMessage]) async -> String? {
+        guard let mcpGitHubAgent = mcpGitHubAgent else {
+            return "❌ GitHub токен не настроен. Пожалуйста, настройте GitHub токен в настройках."
+        }
+        return await mcpGitHubAgent.sendMessage(messages: messages)
+    }
+    
+    func processMCPGitHubCommand(_ command: String) async -> String {
+        print("🔧 ChatService: Обрабатываем MCP GitHub команду: \(command)")
+        
+        guard let mcpGitHubAgent = mcpGitHubAgent else {
+            print("❌ ChatService: GitHub токен не настроен")
+            return "❌ GitHub токен не настроен. Пожалуйста, настройте GitHub токен в настройках."
+        }
+        
+        print("🔧 ChatService: MCP GitHub агент доступен, отправляем команду...")
+        
+        // Создаем сообщение для обработки
+        let message = ChatMessage(author: .user, content: command, isUser: true)
+        let result = await mcpGitHubAgent.sendMessage(messages: [message]) ?? "❌ Ошибка обработки команды"
+        
+        print("🔧 ChatService: Получен результат от MCP агента: \(result)")
+        return result
     }
     
     func validateKey() async -> Bool {

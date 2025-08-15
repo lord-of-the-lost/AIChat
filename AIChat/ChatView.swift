@@ -11,8 +11,8 @@ import MarkdownUI
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
     
-    init(apiKey: String) {
-        _viewModel = StateObject(wrappedValue: ChatViewModel(apiKey: apiKey))
+    init(apiKey: String, githubToken: String) {
+        _viewModel = StateObject(wrappedValue: ChatViewModel(apiKey: apiKey, githubToken: githubToken))
     }
     
     var body: some View {
@@ -43,7 +43,7 @@ struct ChatView: View {
                 if viewModel.isLoading {
                     HStack {
                         ProgressView()
-                        Text(viewModel.currentAgent == .gptDeveloper ? "Developer думает…" : "Reviewer думает…")
+                        Text(loadingText)
                     }
                     .padding()
                 }
@@ -61,5 +61,29 @@ struct ChatView: View {
             .padding()
         }
         .navigationTitle("Чат с агентами")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: {
+                    // Сбросить GitHub токен и вернуться к настройкам
+                    UserDefaults.standard.removeObject(forKey: "githubToken")
+                    // Здесь нужно обновить состояние приложения
+                }) {
+                    Image(systemName: "gear")
+                }
+            }
+        }
+    }
+    
+    private var loadingText: String {
+        switch viewModel.currentAgent {
+        case .gptDeveloper:
+            return "Developer думает…"
+        case .gptReviewer:
+            return "Reviewer думает…"
+        case .mcpGitHubAgent:
+            return "GitHub MCP обрабатывает…"
+        case .user:
+            return "Обработка…"
+        }
     }
 }
