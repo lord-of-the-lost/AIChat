@@ -75,15 +75,6 @@ struct ChatView: View {
     }
     
     private var loadingText: String {
-        switch viewModel.currentAgent {
-        case .gptDeveloper:
-            return "Developer думает…"
-        case .gptReviewer:
-            return "Reviewer думает…"
-        case .mcpGitHubAgent:
-            return "GitHub MCP обрабатывает…"
-        case .user:
-            return "Обработка…"
-        }
+        return "Обработка…"
     }
 }

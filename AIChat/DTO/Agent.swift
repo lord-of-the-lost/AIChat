@@ -7,9 +7,7 @@
 
 enum Agent: String, CaseIterable, Identifiable {
     case user = "Вы"
-    case gptDeveloper = "Developer Agent"
-    case gptReviewer = "Reviewer Agent"
-    case mcpGitHubAgent = "GitHub MCP Agent"
+    case aiAgent = "AI Assistant"
     
     var id: String { rawValue }
 }

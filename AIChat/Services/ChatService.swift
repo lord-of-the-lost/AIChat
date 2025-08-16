@@ -12,55 +12,17 @@ protocol AIService {
 }
 
 final class ChatService {
-    private let developerAgent: AIService
-    private let reviewerAgent: AIService
-    private let mcpGitHubAgent: MCPGitHubAgent?
+    private let aiAgent: UniversalAIAgent
     private let apiKey: String
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
     
     init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
-        self.developerAgent = DeveloperAgent(baseURL: baseURL, apiKey: apiKey)
-        self.reviewerAgent = ReviewerAgent(baseURL: baseURL, apiKey: apiKey)
-        
-        if let githubToken = githubToken, !githubToken.isEmpty {
-            self.mcpGitHubAgent = MCPGitHubAgent(baseURL: baseURL, apiKey: apiKey, githubToken: githubToken)
-        } else {
-            self.mcpGitHubAgent = nil
-        }
+        self.aiAgent = UniversalAIAgent(apiKey: apiKey, githubToken: githubToken)
     }
     
-    func sendToDeveloper(_ messages: [ChatMessage]) async -> String? {
-        await developerAgent.sendMessage(messages: messages)
-    }
-    
-    func sendToReviewer(_ messages: [ChatMessage]) async -> String? {
-        await reviewerAgent.sendMessage(messages: messages)
-    }
-    
-    func sendToMCPGitHub(_ messages: [ChatMessage]) async -> String? {
-        guard let mcpGitHubAgent = mcpGitHubAgent else {
-            return "❌ GitHub токен не настроен. Пожалуйста, настройте GitHub токен в настройках."
-        }
-        return await mcpGitHubAgent.sendMessage(messages: messages)
-    }
-    
-    func processMCPGitHubCommand(_ command: String) async -> String {
-        print("🔧 ChatService: Обрабатываем MCP GitHub команду: \(command)")
-        
-        guard let mcpGitHubAgent = mcpGitHubAgent else {
-            print("❌ ChatService: GitHub токен не настроен")
-            return "❌ GitHub токен не настроен. Пожалуйста, настройте GitHub токен в настройках."
-        }
-        
-        print("🔧 ChatService: MCP GitHub агент доступен, отправляем команду...")
-        
-        // Создаем сообщение для обработки
-        let message = ChatMessage(author: .user, content: command, isUser: true)
-        let result = await mcpGitHubAgent.sendMessage(messages: [message]) ?? "❌ Ошибка обработки команды"
-        
-        print("🔧 ChatService: Получен результат от MCP агента: \(result)")
-        return result
+    func sendMessage(_ messages: [ChatMessage]) async -> String? {
+        await aiAgent.sendMessage(messages: messages)
     }
     
     func validateKey() async -> Bool {
@@ -77,33 +39,22 @@ final class ChatService {
         }
         return false
     }
-    
-    /// Вызывает сначала разработчика, потом ревьюера
-    func sendSequentially(_ messages: [ChatMessage]) async -> [ChatMessage] {
-        var updatedMessages = messages
-        
-        if let devReply = await sendToDeveloper(updatedMessages) {
-            let devMessage = ChatMessage(author: .gptDeveloper, content: devReply, isUser: false)
-            updatedMessages.append(devMessage)
-            
-            if let reviewReply = await sendToReviewer(updatedMessages) {
-                let reviewMessage = ChatMessage(author: .gptReviewer, content: reviewReply, isUser: false)
-                updatedMessages.append(reviewMessage)
-            }
-        }
-        
-        return updatedMessages
-    }
 }
 
-// MARK: - Agent 1
-final class DeveloperAgent: AIService {
+// MARK: - Universal AI Agent
+final class UniversalAIAgent: AIService {
     private let apiKey: String
-    private let baseURL: String
+    private let baseURL = "https://api.proxyapi.ru/openai/v1/"
+    private let mcpService: MCPGitHubService?
     
-    init(baseURL: String, apiKey: String) {
-        self.baseURL = baseURL
+    init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
+        
+        if let githubToken = githubToken, !githubToken.isEmpty {
+            self.mcpService = MCPGitHubService(githubToken: githubToken)
+        } else {
+            self.mcpService = nil
+        }
     }
     
     func sendMessage(messages: [ChatMessage]) async -> String? {
@@ -113,119 +64,141 @@ final class DeveloperAgent: AIService {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         
-        let systemPrompt = """
-        You are an experienced iOS developer working on a design system.
+        // Определяем доступные MCP инструменты
+        var tools: [[String: Any]] = []
         
+        if mcpService != nil {
+            tools = [
+                [
+                    "type": "function",
+                    "function": [
+                        "name": "get_user_repositories",
+                        "description": "Получает список репозиториев текущего пользователя GitHub",
+                        "parameters": [
+                            "type": "object",
+                            "properties": [
+                                "page": [
+                                    "type": "integer",
+                                    "description": "Номер страницы (по умолчанию 1)"
+                                ],
+                                "perPage": [
+                                    "type": "integer", 
+                                    "description": "Количество репозиториев на странице (по умолчанию 30)"
+                                ]
+                            ],
+                            "required": []
+                        ]
+                    ]
+                ],
+                [
+                    "type": "function",
+                    "function": [
+                        "name": "get_issues",
+                        "description": "Получает список Issues из GitHub репозитория",
+                        "parameters": [
+                            "type": "object",
+                            "properties": [
+                                "owner": [
+                                    "type": "string",
+                                    "description": "Владелец репозитория"
+                                ],
+                                "repo": [
+                                    "type": "string",
+                                    "description": "Название репозитория"
+                                ],
+                                "state": [
+                                    "type": "string",
+                                    "description": "Состояние Issues: 'open', 'closed', 'all' (по умолчанию 'open')"
+                                ]
+                            ],
+                            "required": ["owner", "repo"]
+                        ]
+                    ]
+                ],
+                [
+                    "type": "function",
+                    "function": [
+                        "name": "create_repository",
+                        "description": "Создает новый GitHub репозиторий",
+                        "parameters": [
+                            "type": "object",
+                            "properties": [
+                                "name": [
+                                    "type": "string",
+                                    "description": "Название репозитория"
+                                ],
+                                "description": [
+                                    "type": "string",
+                                    "description": "Описание репозитория"
+                                ],
+                                "isPrivate": [
+                                    "type": "boolean",
+                                    "description": "Приватный репозиторий (по умолчанию false)"
+                                ]
+                            ],
+                            "required": ["name"]
+                        ]
+                    ]
+                ]
+            ]
+        }
+        
+        let systemPrompt = """
+        ROLE: Universal AI Assistant with GitHub MCP Integration
+        PURPOSE: Be a helpful conversational AI that can also work with GitHub via MCP tools when needed.
+
         LANGUAGE RULES:
-        - All communication (interview questions, clarifications, explanations) MUST be in Russian.
-        - The full text of the technical specification inside <TECH_SPEC> MUST also be entirely in Russian (no English, except variable/class names).
-        - Any code snippets MUST be in English.
-        
-        COMMUNICATION PROTOCOL (MANDATORY):
-        - While interviewing, your response MUST start with exactly "<STATE: INTERVIEW>" on the first line,
-          then ask exactly ONE concise question to gather requirements for a new UI component.
-        - When you have enough information to compile a complete technical specification (TS),
-          your response MUST start with exactly "<STATE: SPEC_READY>" on the first line,
-          and then include the final spec wrapped strictly like:
-          <TECH_SPEC>
-          ... full and final TS ...
-          </TECH_SPEC>
-        
-        Interview goals:
-        - Clarify: component name, purpose/use cases, required props/configurations, styling rules,
-          accessibility requirements, edge cases, platform constraints, integration points.
-        
-        Rules:
-        - Ask one question at a time during INTERVIEW state.
-        - Do NOT provide code.
-        - Do NOT switch back to INTERVIEW after SPEC_READY.
-        - Never include both states in one message.
-        - Keep the spec clear and implementation-ready.
-        """
-        
-        let allMessages: [[String: String]] =
-        [["role": "system", "content": systemPrompt]] +
-        messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
-        
-        let payload: [String: Any] = [
-            "model": "gpt-3.5-turbo",
-            "messages": allMessages
-        ]
-        
-        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
-        return await performRequest(request: request)
-    }
-    
-    private func performRequest(request: URLRequest) async -> String? {
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any],
-               let content = message["content"] as? String {
-                return content.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-        } catch {
-            print("❌ Agent1 Error:", error)
-        }
-        return nil
-    }
-}
+        - All communication MUST be in Russian.
+        - Be friendly, helpful, and conversational.
+        - Provide informative and engaging responses on any topic.
 
-// MARK: - Agent 2
-final class ReviewerAgent: AIService {
-    private let apiKey: String
-    private let baseURL: String
-    
-    init(baseURL: String, apiKey: String) {
-        self.baseURL = baseURL
-        self.apiKey = apiKey
-    }
-    
-    func sendMessage(messages: [ChatMessage]) async -> String? {
-        guard let url = URL(string: baseURL + "chat/completions") else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        GITHUB MCP INTEGRATION:
+        - When user mentions GitHub-related topics (repositories, issues, projects), suggest using MCP tools.
+        - Use the format: "<MCP_SUGGESTION>Хотите использовать MCP для работы с GitHub? Я могу [действие].</MCP_SUGGESTION>"
         
-        let systemPrompt = """
-        ROLE: ReviewerAgent
-        PURPOSE: Review the technical specification <TECH_SPEC> prepared by DeveloperAgent.
-
+        AVAILABLE MCP TOOLS (if GitHub token is configured):
+        - get_user_repositories: Получить список ваших репозиториев
+        - get_issues: Получить Issues из конкретного репозитория
+        - create_repository: Создать новый репозиторий
+        
+        ANALYSIS AFTER MCP:
+        - После получения данных через MCP ВСЕГДА анализируй результаты
+        - Для репозиториев: анализируй активность, типы проектов, рекомендации
+        - Для Issues: анализируй приоритеты, сложность, создай план работы
+        
+        CONVERSATION STYLE:
+        - Be natural and conversational
+        - Answer questions on any topic (technology, science, culture, etc.)
+        - When discussing technical topics, be clear and accessible
+        - Only suggest MCP when GitHub operations are mentioned
+        - Keep responses natural and engaging
+        
+        EXAMPLES:
+        - User: "Какие у меня репозитории?" → предложи get_user_repositories
+        - User: "Покажи Issues в моем проекте" → предложи get_issues
+        - User: "Как работает React?" → обычный ответ без MCP
+        
         RULES:
-        - Input: A dialogue history that MUST contain a <TECH_SPEC> block.
-        - If <TECH_SPEC> is missing, malformed, or empty:
-          1. Respond ONLY with:
-             <STATE: REVIEW_ERROR>
-             Причина: <кратко на русском, что пошло не так>
-          2. Do NOT attempt to generate code or assumptions in this case.
-        - If <TECH_SPEC> exists but is incomplete or unclear:
-          1. Respond with:
-             <STATE: REVIEW_REQUEST>
-             Комментарии: <список уточнений или недостающих деталей на русском>
-        - If <TECH_SPEC> is complete and clear:
-          1. Respond with:
-             <STATE: REVIEW_READY>
-             <REVIEW_RESULT>
-             ...текст ревью и/или код...
-             </REVIEW_RESULT>
-
-        LANGUAGE RULES:
-        - All non-code text must be in Russian.
-        - Code examples must be in English.
-        - Never return an empty message. Always include a state tag and some content.
+        - Be helpful and informative on any topic
+        - Suggest MCP only when GitHub operations are mentioned
+        - After using MCP tools, provide detailed analysis
+        - Don't force GitHub integration when not relevant
         """
         
         let allMessages: [[String: String]] =
         [["role": "system", "content": systemPrompt]] +
         messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
         
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "model": "gpt-3.5-turbo",
             "messages": allMessages
         ]
+        
+        // Добавляем инструменты только если есть GitHub токен
+        if !tools.isEmpty {
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        }
         
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         return await performRequest(request: request)
@@ -235,15 +208,92 @@ final class ReviewerAgent: AIService {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any] {
+                
+                // Проверяем, есть ли tool_calls (MCP инструменты)
+                if let toolCalls = message["tool_calls"] as? [[String: Any]] {
+                    var results: [String] = []
+                    
+                    for toolCall in toolCalls {
+                        if let function = toolCall["function"] as? [String: Any],
+                           let name = function["name"] as? String,
+                           let argumentsString = function["arguments"] as? String,
+                           let argumentsData = argumentsString.data(using: .utf8),
+                           let arguments = try? JSONSerialization.jsonObject(with: argumentsData) as? [String: Any] {
+                            
+                            print("🔧 AI Agent: Вызываем MCP инструмент '\(name)' с аргументами: \(arguments)")
+                            
+                            // Выполняем MCP инструмент
+                            if let mcpService = mcpService {
+                                let mcpResult = await mcpService.executeTool(name: name, arguments: arguments)
+                                
+                                // Извлекаем текст из MCP результата
+                                if let content = mcpResult.content.first?.text {
+                                    print("🔧 AI Agent: Получен результат MCP: \(content)")
+                                    
+                                    // Автоматически анализируем результат
+                                    let analysis = await analyzeResult(content: content, tool: name)
+                                    results.append(content + "\n\n" + analysis)
+                                }
+                            }
+                        }
+                    }
+                    
+                    return results.joined(separator: "\n\n")
+                } else if let content = message["content"] as? String {
+                    return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        } catch {
+            print("❌ Universal AI Agent Error:", error)
+        }
+        return nil
+    }
+    
+    private func analyzeResult(content: String, tool: String) async -> String {
+        guard let url = URL(string: baseURL + "chat/completions") else { return "" }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let analysisPrompt = """
+        Проанализируй результат выполнения MCP инструмента '\(tool)':
+
+        \(content)
+
+        Инструкции для анализа:
+        - Если это список репозиториев: анализируй активность, типы проектов, дай рекомендации
+        - Если это Issues: анализируй приоритеты, сложность, создай план работы
+        - Будь конкретным и полезным
+        - Отвечай на русском языке
+        - Начни с заголовка "📊 АНАЛИЗ РЕЗУЛЬТАТОВ:"
+        """
+        
+        let payload: [String: Any] = [
+            "model": "gpt-3.5-turbo",
+            "messages": [["role": "user", "content": analysisPrompt]]
+        ]
+        
+        request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return "" }
+            
             if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                let choices = json["choices"] as? [[String: Any]],
                let message = choices.first?["message"] as? [String: Any],
-               let content = message["content"] as? String {
-                return content.trimmingCharacters(in: .whitespacesAndNewlines)
+               let analysis = message["content"] as? String {
+                return analysis.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         } catch {
-            print("❌ Agent2 Error:", error)
+            print("❌ Analysis Error:", error)
         }
-        return nil
+        
+        return ""
     }
 }

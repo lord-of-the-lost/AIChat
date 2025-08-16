@@ -124,6 +124,55 @@ final class MCPGitHubService {
         }
     }
     
+    func getUserRepositories(page: Int = 1, perPage: Int = 30) async -> Result<[GitHubResponse], Error> {
+        var components = URLComponents(string: "\(baseURL)/user/repos")!
+        components.queryItems = [
+            URLQueryItem(name: "sort", value: "updated"),
+            URLQueryItem(name: "direction", value: "desc"),
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "per_page", value: "\(perPage)")
+        ]
+        
+        guard let url = components.url else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        
+        print("🔍 Получаем репозитории пользователя")
+        print("URL: \(url)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            print("📡 HTTP статус: \(httpResponse.statusCode)")
+            
+            if httpResponse.statusCode == 200 {
+                let repositories = try JSONDecoder().decode([GitHubResponse].self, from: data)
+                print("✅ Получено \(repositories.count) репозиториев")
+                return .success(repositories)
+            } else {
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorData["message"] as? String {
+                    print("❌ GitHub API ошибка: \(message)")
+                    return .failure(GitHubMCPError.apiError(message))
+                } else {
+                    print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                    return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                }
+            }
+        } catch {
+            print("❌ Ошибка при получении репозиториев: \(error)")
+            return .failure(error)
+        }
+    }
+    
     func searchRepositories(query: String, page: Int = 1, perPage: Int = 30) async -> Result<GitHubSearchResponse, Error> {
         var components = URLComponents(string: "\(baseURL)/search/repositories")!
         components.queryItems = [
@@ -163,6 +212,55 @@ final class MCPGitHubService {
         }
     }
     
+    func getIssues(owner: String, repo: String, state: String = "open", page: Int = 1, perPage: Int = 30) async -> Result<[GitHubIssue], Error> {
+        var components = URLComponents(string: "\(baseURL)/repos/\(owner)/\(repo)/issues")!
+        components.queryItems = [
+            URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "page", value: "\(page)"),
+            URLQueryItem(name: "per_page", value: "\(perPage)")
+        ]
+        
+        guard let url = components.url else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        
+        print("🔍 Получаем Issues для репозитория \(owner)/\(repo)")
+        print("URL: \(url)")
+        print("Состояние: \(state)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            print("📡 HTTP статус: \(httpResponse.statusCode)")
+            
+            if httpResponse.statusCode == 200 {
+                let issues = try JSONDecoder().decode([GitHubIssue].self, from: data)
+                print("✅ Получено \(issues.count) Issues")
+                return .success(issues)
+            } else {
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorData["message"] as? String {
+                    print("❌ GitHub API ошибка: \(message)")
+                    return .failure(GitHubMCPError.apiError(message))
+                } else {
+                    print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                    return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                }
+            }
+        } catch {
+            print("❌ Ошибка при получении Issues: \(error)")
+            return .failure(error)
+        }
+    }
+    
     // MARK: - MCP Tool Execution
     
     func executeTool(name: String, arguments: [String: Any]) async -> MCPResult {
@@ -175,15 +273,21 @@ final class MCPGitHubService {
         case "get_user_info":
             print("🔧 MCP Service: Получаем информацию о пользователе...")
             return await handleGetUserInfo()
+        case "get_user_repositories":
+            print("🔧 MCP Service: Получаем репозитории пользователя...")
+            return await handleGetUserRepositories(arguments)
         case "search_repositories":
             print("🔧 MCP Service: Ищем репозитории...")
             return await handleSearchRepositories(arguments)
+        case "get_issues":
+            print("🔧 MCP Service: Получаем Issues...")
+            return await handleGetIssues(arguments)
         default:
             print("❌ MCP Service: Неизвестный инструмент: \(name)")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
-                    text: "❌ Неизвестный инструмент: \(name)",
+                    text: "❌ Неизвестный инструмент: \(name). Доступные инструменты: create_repository, get_user_info, get_user_repositories, search_repositories, get_issues",
                     toolCalls: nil
                 )
             ])
@@ -336,6 +440,149 @@ final class MCPGitHubService {
             ])
         }
     }
+    
+    private func handleGetUserRepositories(_ arguments: [String: Any]) async -> MCPResult {
+        print("🔧 handleGetUserRepositories: Начинаем обработку аргументов: \(arguments)")
+        
+        let page = arguments["page"] as? Int ?? 1
+        let perPage = arguments["perPage"] as? Int ?? 30
+        
+        print("🔧 handleGetUserRepositories: Вызываем getUserRepositories с page=\(page), perPage=\(perPage)")
+        
+        let result = await getUserRepositories(page: page, perPage: perPage)
+        
+        switch result {
+        case .success(let repositories):
+            if repositories.isEmpty {
+                return MCPResult(content: [
+                    MCPContent(
+                        type: "text",
+                        text: """
+                        📁 Ваши репозитории:
+                        
+                        У вас пока нет репозиториев.
+                        """,
+                        toolCalls: nil
+                    )
+                ])
+            }
+            
+            let reposList = repositories.map { repo in
+                """
+                📁 \(repo.name)
+                🔗 \(repo.htmlUrl)
+                📋 \(repo.description ?? "Без описания")
+                🔒 \(repo.isPrivate ? "Приватный" : "Публичный")
+                📅 Обновлен: \(repo.createdAt)
+                """
+            }.joined(separator: "\n\n")
+            
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: """
+                    📁 Ваши репозитории (последние обновленные):
+                    
+                    Всего репозиториев: \(repositories.count)
+                    
+                    \(reposList)
+                    """,
+                    toolCalls: nil
+                )
+            ])
+            
+        case .failure(let error):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка при получении репозиториев: \(error.localizedDescription)",
+                    toolCalls: nil
+                )
+            ])
+        }
+    }
+    
+    private func handleGetIssues(_ arguments: [String: Any]) async -> MCPResult {
+        print("🔧 handleGetIssues: Начинаем обработку аргументов: \(arguments)")
+        
+        guard let owner = arguments["owner"] as? String else {
+            print("❌ handleGetIssues: Не указан owner")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Не указан owner репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        guard let repo = arguments["repo"] as? String else {
+            print("❌ handleGetIssues: Не указан repo")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Не указан repo репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        let state = arguments["state"] as? String ?? "open"
+        
+        print("🔧 handleGetIssues: Вызываем getIssues с owner=\(owner), repo=\(repo), state=\(state)")
+        
+        let result = await getIssues(owner: owner, repo: repo, state: state)
+        
+        switch result {
+        case .success(let issues):
+            if issues.isEmpty {
+                return MCPResult(content: [
+                    MCPContent(
+                        type: "text",
+                        text: """
+                        📋 Issues в репозитории \(owner)/\(repo):
+                        
+                        Нет открытых Issues в репозитории.
+                        """,
+                        toolCalls: nil
+                    )
+                ])
+            }
+            
+            let issuesList = issues.map { issue in
+                """
+                🔢 #\(issue.number) - \(issue.title)
+                📝 \(issue.body ?? "Без описания")
+                👤 Автор: \(issue.user.login)
+                📅 Создан: \(issue.createdAt)
+                🔗 URL: \(issue.htmlUrl)
+                """
+            }.joined(separator: "\n\n")
+            
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: """
+                    📋 Issues в репозитории \(owner)/\(repo):
+                    
+                    Всего Issues: \(issues.count)
+                    
+                    \(issuesList)
+                    """,
+                    toolCalls: nil
+                )
+            ])
+            
+        case .failure(let error):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка при получении Issues: \(error.localizedDescription)",
+                    toolCalls: nil
+                )
+            ])
+        }
+    }
 }
 
 // MARK: - Data Models
@@ -394,6 +641,45 @@ struct GitHubSearchResponse: Codable {
         case totalCount = "total_count"
         case items
     }
+}
+
+struct GitHubIssue: Codable {
+    let id: Int
+    let number: Int
+    let title: String
+    let body: String?
+    let state: String
+    let htmlUrl: String
+    let createdAt: String
+    let updatedAt: String
+    let user: GitHubIssueUser
+    let labels: [GitHubLabel]
+    
+    enum CodingKeys: String, CodingKey {
+        case id, number, title, body, state
+        case htmlUrl = "html_url"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+        case user, labels
+    }
+}
+
+struct GitHubIssueUser: Codable {
+    let login: String
+    let id: Int
+    let avatarUrl: String
+    
+    enum CodingKeys: String, CodingKey {
+        case login, id
+        case avatarUrl = "avatar_url"
+    }
+}
+
+struct GitHubLabel: Codable {
+    let id: Int
+    let name: String
+    let color: String
+    let description: String?
 }
 
 enum GitHubMCPError: LocalizedError {
