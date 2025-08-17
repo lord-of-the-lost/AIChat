@@ -234,6 +234,14 @@ final class UniversalAIAgent: AIService {
                                 if let content = mcpResult.content.first?.text {
                                     print("🔧 AI Agent: Получен результат MCP: \(content)")
                                     
+                                    // Отправляем статистику в мониторинг
+                                    await sendMCPStatistics(
+                                        toolName: name,
+                                        arguments: arguments,
+                                        success: !content.contains("❌"),
+                                        responseLength: content.count
+                                    )
+                                    
                                     // Автоматически анализируем результат
                                     let analysis = await analyzeResult(content: content, tool: name)
                                     results.append(content + "\n\n" + analysis)
@@ -295,5 +303,48 @@ final class UniversalAIAgent: AIService {
         }
         
         return ""
+    }
+    
+    private func sendMCPStatistics(toolName: String, arguments: [String: Any], success: Bool, responseLength: Int) async {
+        // URL мониторинга (можно сделать настраиваемым)
+        let monitorURL = "http://localhost:5001/mcp/event"
+        
+        guard let url = URL(string: monitorURL) else {
+            print("❌ Неверный URL мониторинга")
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let sessionId = UUID().uuidString
+        let payload: [String: Any] = [
+            "tool_name": toolName,
+            "arguments": arguments,
+            "success": success,
+            "response_length": responseLength,
+            "user_id": "ios_user",
+            "session_id": sessionId,
+            "timestamp": ISO8601DateFormatter().string(from: Date())
+        ]
+        
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: payload)
+            request.httpBody = jsonData
+            
+            let (_, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 200 {
+                    print("📊 Статистика MCP отправлена в мониторинг")
+                } else {
+                    print("⚠️ Ошибка отправки статистики: \(httpResponse.statusCode)")
+                }
+            }
+        } catch {
+            print("⚠️ Ошибка отправки статистики MCP: \(error)")
+            // Не критично, если мониторинг недоступен
+        }
     }
 }
