@@ -212,6 +212,102 @@ final class MCPGitHubService {
         }
     }
     
+    func checkRepository(owner: String, repo: String) async -> Result<GitHubResponse, Error> {
+        guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)") else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            if httpResponse.statusCode == 200 {
+                let repository = try JSONDecoder().decode(GitHubResponse.self, from: data)
+                return .success(repository)
+            } else {
+                return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+            }
+        } catch {
+            return .failure(error)
+        }
+    }
+    
+    func createIssue(owner: String, repo: String, title: String, body: String?, labels: [String] = []) async -> Result<GitHubIssue, Error> {
+        // Сначала проверяем существование репозитория
+        let repoCheck = await checkRepository(owner: owner, repo: repo)
+        if case .failure(let error) = repoCheck {
+            print("❌ Репозиторий \(owner)/\(repo) не найден или недоступен")
+            return .failure(GitHubMCPError.apiError("Репозиторий \(owner)/\(repo) не найден. Проверьте правильность имени репозитория и наличие прав доступа."))
+        }
+        
+        guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)/issues") else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        
+        let issue = GitHubCreateIssueRequest(
+            title: title,
+            body: body,
+            labels: labels
+        )
+        
+        do {
+            let jsonData = try JSONEncoder().encode(issue)
+            request.httpBody = jsonData
+            
+            print("🔍 Отправляем запрос на создание Issue:")
+            print("URL: \(url)")
+            print("Owner: \(owner)")
+            print("Repo: \(repo)")
+            print("Название: \(title)")
+            print("Описание: \(body ?? "Не указано")")
+            print("Метки: \(labels)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ Неверный HTTP ответ")
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            print("📡 HTTP статус: \(httpResponse.statusCode)")
+            
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📄 Ответ от GitHub: \(responseString)")
+            }
+            
+            if httpResponse.statusCode == 201 {
+                let createdIssue = try JSONDecoder().decode(GitHubIssue.self, from: data)
+                print("✅ Issue успешно создан: #\(createdIssue.number)")
+                return .success(createdIssue)
+            } else {
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorData["message"] as? String {
+                    print("❌ GitHub API ошибка: \(message)")
+                    return .failure(GitHubMCPError.apiError(message))
+                } else {
+                    print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                    return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                }
+            }
+        } catch {
+            print("❌ Ошибка при создании Issue: \(error)")
+            return .failure(error)
+        }
+    }
+    
     func getIssues(owner: String, repo: String, state: String = "open", page: Int = 1, perPage: Int = 30) async -> Result<[GitHubIssue], Error> {
         var components = URLComponents(string: "\(baseURL)/repos/\(owner)/\(repo)/issues")!
         components.queryItems = [
@@ -282,12 +378,18 @@ final class MCPGitHubService {
         case "get_issues":
             print("🔧 MCP Service: Получаем Issues...")
             return await handleGetIssues(arguments)
+        case "create_issue":
+            print("🔧 MCP Service: Создаем Issue...")
+            return await handleCreateIssue(arguments)
+        case "check_repository":
+            print("🔧 MCP Service: Проверяем репозиторий...")
+            return await handleCheckRepository(arguments)
         default:
             print("❌ MCP Service: Неизвестный инструмент: \(name)")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
-                    text: "❌ Неизвестный инструмент: \(name). Доступные инструменты: create_repository, get_user_info, get_user_repositories, search_repositories, get_issues",
+                    text: "❌ Неизвестный инструмент: \(name). Доступные инструменты: create_repository, get_user_info, get_user_repositories, search_repositories, get_issues, create_issue, check_repository",
                     toolCalls: nil
                 )
             ])
@@ -583,6 +685,168 @@ final class MCPGitHubService {
             ])
         }
     }
+    
+    private func handleCreateIssue(_ arguments: [String: Any]) async -> MCPResult {
+        print("🔧 handleCreateIssue: Начинаем обработку аргументов: \(arguments)")
+        
+        guard let owner = arguments["owner"] as? String else {
+            print("❌ handleCreateIssue: Не указан owner")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка: не указан owner репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        guard let repo = arguments["repo"] as? String else {
+            print("❌ handleCreateIssue: Не указан repo")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка: не указан repo репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        guard let title = arguments["title"] as? String else {
+            print("❌ handleCreateIssue: Не указан title")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка: не указан title для Issue",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        let body = arguments["body"] as? String
+        let labels = arguments["labels"] as? [String] ?? []
+        
+        print("🔧 handleCreateIssue: Параметры Issue:")
+        print("  - Owner: \(owner)")
+        print("  - Repo: \(repo)")
+        print("  - Title: \(title)")
+        print("  - Body: \(body ?? "Не указано")")
+        print("  - Labels: \(labels)")
+        
+        let result = await createIssue(
+            owner: owner,
+            repo: repo,
+            title: title,
+            body: body,
+            labels: labels
+        )
+        
+        switch result {
+        case .success(let issue):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: """
+                    ✅ Issue успешно создан!
+                    
+                    🔢 Номер: #\(issue.number)
+                    📋 Название: \(issue.title)
+                    👤 Автор: \(issue.user.login)
+                    📁 Репозиторий: \(owner)/\(repo)
+                    🔗 URL: \(issue.htmlUrl)
+                    📅 Создан: \(issue.createdAt)
+                    🏷️ Состояние: \(issue.state)
+                    
+                    \(issue.body != nil ? "📝 Описание:\n\(issue.body!)" : "")
+                    """,
+                    toolCalls: nil
+                )
+            ])
+            
+        case .failure(let error):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка при создании Issue: \(error.localizedDescription)",
+                    toolCalls: nil
+                )
+            ])
+        }
+    }
+    
+    private func handleCheckRepository(_ arguments: [String: Any]) async -> MCPResult {
+        print("🔧 handleCheckRepository: Начинаем обработку аргументов: \(arguments)")
+        
+        guard let owner = arguments["owner"] as? String else {
+            print("❌ handleCheckRepository: Не указан owner")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка: не указан owner репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        guard let repo = arguments["repo"] as? String else {
+            print("❌ handleCheckRepository: Не указан repo")
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: "❌ Ошибка: не указан repo репозитория",
+                    toolCalls: nil
+                )
+            ])
+        }
+        
+        let result = await checkRepository(owner: owner, repo: repo)
+        
+        switch result {
+        case .success(let repository):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: """
+                    ✅ Репозиторий найден и доступен!
+                    
+                    📁 Название: \(repository.name)
+                    👤 Владелец: \(owner)
+                    🔗 URL: \(repository.htmlUrl)
+                    📋 Описание: \(repository.description ?? "Не указано")
+                    🔒 Приватный: \(repository.isPrivate ? "Да" : "Нет")
+                    📅 Создан: \(repository.createdAt)
+                    
+                    Репозиторий готов для создания Issues.
+                    """,
+                    toolCalls: nil
+                )
+            ])
+            
+        case .failure(let error):
+            return MCPResult(content: [
+                MCPContent(
+                    type: "text",
+                    text: """
+                    ❌ Репозиторий \(owner)/\(repo) недоступен!
+                    
+                    Возможные причины:
+                    • Неправильное название репозитория
+                    • Репозиторий не существует
+                    • Нет прав доступа к репозиторию
+                    • GitHub токен не имеет необходимых разрешений
+                    
+                    Проверьте:
+                    1. Правильность написания: \(owner)/\(repo)
+                    2. Существование репозитория на GitHub
+                    3. Права доступа к репозиторию
+                    4. Настройки GitHub токена
+                    
+                    Ошибка: \(error.localizedDescription)
+                    """,
+                    toolCalls: nil
+                )
+            ])
+        }
+    }
 }
 
 // MARK: - Data Models
@@ -680,6 +944,12 @@ struct GitHubLabel: Codable {
     let name: String
     let color: String
     let description: String?
+}
+
+struct GitHubCreateIssueRequest: Codable {
+    let title: String
+    let body: String?
+    let labels: [String]
 }
 
 enum GitHubMCPError: LocalizedError {

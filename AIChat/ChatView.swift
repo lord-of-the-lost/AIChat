@@ -10,9 +10,10 @@ import MarkdownUI
 
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
+    @State private var showSettings = false
     
-    init(apiKey: String, githubToken: String) {
-        _viewModel = StateObject(wrappedValue: ChatViewModel(apiKey: apiKey, githubToken: githubToken))
+    init(apiKey: String, githubToken: String, notionToken: String = "") {
+        _viewModel = StateObject(wrappedValue: ChatViewModel(apiKey: apiKey, githubToken: githubToken, notionToken: notionToken))
     }
     
     var body: some View {
@@ -64,13 +65,14 @@ struct ChatView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
-                    // Сбросить GitHub токен и вернуться к настройкам
-                    UserDefaults.standard.removeObject(forKey: "githubToken")
-                    // Здесь нужно обновить состояние приложения
+                    showSettings = true
                 }) {
                     Image(systemName: "gear")
                 }
             }
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
         }
     }
     

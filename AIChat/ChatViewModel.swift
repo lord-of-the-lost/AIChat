@@ -14,12 +14,14 @@ final class ChatViewModel: ObservableObject {
     @Published var isLoading = false
     @Published var currentAgent: Agent = .aiAgent
     @Published var githubToken: String = UserDefaults.standard.string(forKey: "githubToken") ?? ""
+    @Published var notionToken: String = UserDefaults.standard.string(forKey: "notionToken") ?? ""
     
     private let service: ChatService
     
-    init(apiKey: String, githubToken: String = "") {
-        self.service = ChatService(apiKey: apiKey, githubToken: githubToken)
+    init(apiKey: String, githubToken: String = "", notionToken: String = "") {
+        self.service = ChatService(apiKey: apiKey, githubToken: githubToken, notionToken: notionToken)
         self.githubToken = githubToken
+        self.notionToken = notionToken
     }
     
     func sendUserMessage() {
@@ -39,10 +41,17 @@ final class ChatViewModel: ObservableObject {
             isLoading = true
             currentAgent = .aiAgent
             
+            print("📱 ChatViewModel: Отправляем сообщения в ChatService")
+            print("📱 Всего сообщений: \(messages.count)")
+            
             // Отправляем все сообщения через единого AI агента
             let result = await service.sendMessage(messages)
             
             if let result = result {
+                print("📱 ChatViewModel: Получен ответ от ChatService")
+                print("📱 Длина ответа: \(result.count) символов")
+                print("📱 Первые 100 символов: \(result.prefix(100))...")
+                
                 // Проверяем, есть ли MCP предложения
                 if hasMCPSuggestion(result) {
                     let cleanResult = stripMCPTags(result)
@@ -50,6 +59,8 @@ final class ChatViewModel: ObservableObject {
                 } else {
                     messages.append(ChatMessage(author: .aiAgent, content: result, isUser: false))
                 }
+            } else {
+                print("📱 ChatViewModel: Получен nil ответ от ChatService")
             }
             
             isLoading = false

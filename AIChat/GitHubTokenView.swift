@@ -10,8 +10,11 @@ import SwiftUI
 struct GitHubTokenView: View {
     @Binding var githubToken: String
     @Binding var isTokenValid: Bool
+    @Environment(\.dismiss) private var dismiss
+    @State private var tempToken: String = ""
     @State private var isLoading = false
     @State private var errorMessage = ""
+    @State private var showSaveConfirmation = false
     
     var body: some View {
         VStack(spacing: 20) {
@@ -33,14 +36,35 @@ struct GitHubTokenView: View {
                 Text("GitHub Personal Access Token")
                     .font(.headline)
                 
-                SecureField("ghp_xxxxxxxxxxxxxxxxxxxx", text: $githubToken)
+                SecureField("ghp_xxxxxxxxxxxxxxxxxxxx", text: $tempToken)
                     .textFieldStyle(.roundedBorder)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(
+                                tempToken.isEmpty ? Color.clear : 
+                                isValidGitHubToken(tempToken) ? Color.green : Color.red,
+                                lineWidth: 1
+                            )
+                    )
+                    .onAppear {
+                        tempToken = githubToken
+                    }
                 
-                Text("Токен должен начинаться с 'ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_' или 'ghr_' и содержать минимум 40 символов")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+                HStack {
+                    Text("Токен должен начинаться с 'ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_' или 'ghr_' и содержать минимум 40 символов")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    if !tempToken.isEmpty {
+                        Image(systemName: isValidGitHubToken(tempToken) ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundColor(isValidGitHubToken(tempToken) ? .green : .red)
+                            .font(.caption)
+                    }
+                }
                 
                 if !errorMessage.isEmpty {
                     Text(errorMessage)
@@ -65,12 +89,18 @@ struct GitHubTokenView: View {
                     .foregroundColor(.white)
                     .cornerRadius(10)
                 }
-                .disabled(githubToken.isEmpty || isLoading)
+                .disabled(tempToken.isEmpty || isLoading || !isValidGitHubToken(tempToken))
                 
                 if isTokenValid {
-                    Button("Продолжить") {
-                        UserDefaults.standard.set(githubToken, forKey: "githubToken")
-                        isTokenValid = true // Убеждаемся, что токен валидный
+                    Button("Сохранить") {
+                        githubToken = tempToken
+                        UserDefaults.standard.set(tempToken, forKey: "githubToken")
+                        showSaveConfirmation = true
+                        
+                        // Автоматически закрываем через короткое время
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            dismiss()
+                        }
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
@@ -121,16 +151,23 @@ struct GitHubTokenView: View {
             Spacer()
         }
         .padding()
+        .alert("Токен сохранен!", isPresented: $showSaveConfirmation) {
+            Button("OK") { }
+        } message: {
+            Text("GitHub токен успешно сохранен и готов к использованию")
+        }
+    }
+    
+    private func isValidGitHubToken(_ token: String) -> Bool {
+        let validPrefixes = ["ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_"]
+        let hasValidPrefix = validPrefixes.contains { token.hasPrefix($0) }
+        return hasValidPrefix && token.count >= 40
     }
     
     private func validateToken() {
-        guard !githubToken.isEmpty else { return }
+        guard !tempToken.isEmpty else { return }
         
-        // Проверяем базовый формат токена
-        let validPrefixes = ["ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_"]
-        let hasValidPrefix = validPrefixes.contains { githubToken.hasPrefix($0) }
-        
-        guard hasValidPrefix && githubToken.count >= 40 else {
+        guard isValidGitHubToken(tempToken) else {
             errorMessage = "Токен должен начинаться с 'ghp_', 'github_pat_', 'gho_', 'ghu_', 'ghs_' или 'ghr_' и содержать минимум 40 символов"
             isTokenValid = false
             return
@@ -140,7 +177,7 @@ struct GitHubTokenView: View {
         errorMessage = ""
         
         Task {
-            let mcpService = MCPGitHubService(githubToken: githubToken)
+            let mcpService = MCPGitHubService(githubToken: tempToken)
             let result = await mcpService.getUserInfo()
             
             await MainActor.run {
