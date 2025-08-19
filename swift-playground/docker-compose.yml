@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  swift-playground:
+    build: .
+    container_name: swift-playground
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: swift main.swift
+    environment:
+      - SWIFT_VERSION=5.9
+    restart: "no"
+    network_mode: none  # Изолируем сетевой доступ для безопасности

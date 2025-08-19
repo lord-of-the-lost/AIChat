@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import MarkdownUI
 
 struct ChatView: View {
     @StateObject private var viewModel: ChatViewModel
@@ -24,17 +23,10 @@ struct ChatView: View {
                             .font(.caption)
                             .foregroundColor(.gray)
                         
-                        if message.isUser {
-                            Text(message.content)
-                                .padding()
-                                .background(Color.blue.opacity(0.2))
-                                .cornerRadius(8)
-                        } else {
-                            Markdown(message.content)
-                                .padding()
-                                .background(Color.gray.opacity(0.1))
-                                .cornerRadius(8)
-                        }
+                        Text(message.content)
+                            .padding()
+                            .background(message.isUser ? Color.blue.opacity(0.2) : Color.gray.opacity(0.1))
+                            .cornerRadius(8)
                     }
                     .frame(maxWidth: .infinity, alignment: message.isUser ? .trailing : .leading)
                     .padding(.vertical, 2)

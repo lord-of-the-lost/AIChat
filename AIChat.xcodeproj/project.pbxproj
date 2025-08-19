@@ -11,10 +11,16 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		606040BC2E54DC7700EDD4D0 /* AIChatMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIChatMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		60FE9B322E48DD120015ACD6 /* AIChat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AIChat.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		606040BD2E54DC7700EDD4D0 /* AIChatMac */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = AIChatMac;
+			sourceTree = "<group>";
+		};
 		60FE9B342E48DD120015ACD6 /* AIChat */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = AIChat;
@@ -23,6 +29,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		606040B92E54DC7700EDD4D0 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		60FE9B2F2E48DD120015ACD6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -38,6 +51,7 @@
 			isa = PBXGroup;
 			children = (
 				60FE9B342E48DD120015ACD6 /* AIChat */,
+				606040BD2E54DC7700EDD4D0 /* AIChatMac */,
 				60FE9B332E48DD120015ACD6 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -46,6 +60,7 @@
 			isa = PBXGroup;
 			children = (
 				60FE9B322E48DD120015ACD6 /* AIChat.app */,
+				606040BC2E54DC7700EDD4D0 /* AIChatMac.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -53,6 +68,28 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		606040BB2E54DC7700EDD4D0 /* AIChatMac */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 606040CA2E54DC7800EDD4D0 /* Build configuration list for PBXNativeTarget "AIChatMac" */;
+			buildPhases = (
+				606040B82E54DC7700EDD4D0 /* Sources */,
+				606040B92E54DC7700EDD4D0 /* Frameworks */,
+				606040BA2E54DC7700EDD4D0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				606040BD2E54DC7700EDD4D0 /* AIChatMac */,
+			);
+			name = AIChatMac;
+			packageProductDependencies = (
+			);
+			productName = AIChatMac;
+			productReference = 606040BC2E54DC7700EDD4D0 /* AIChatMac.app */;
+			productType = "com.apple.product-type.application";
+		};
 		60FE9B312E48DD120015ACD6 /* AIChat */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 60FE9B402E48DD130015ACD6 /* Build configuration list for PBXNativeTarget "AIChat" */;
@@ -86,6 +123,9 @@
 				LastSwiftUpdateCheck = 1620;
 				LastUpgradeCheck = 1620;
 				TargetAttributes = {
+					606040BB2E54DC7700EDD4D0 = {
+						CreatedOnToolsVersion = 16.2;
+					};
 					60FE9B312E48DD120015ACD6 = {
 						CreatedOnToolsVersion = 16.2;
 					};
@@ -109,11 +149,19 @@
 			projectRoot = "";
 			targets = (
 				60FE9B312E48DD120015ACD6 /* AIChat */,
+				606040BB2E54DC7700EDD4D0 /* AIChatMac */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		606040BA2E54DC7700EDD4D0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		60FE9B302E48DD120015ACD6 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -124,6 +172,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		606040B82E54DC7700EDD4D0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		60FE9B2E2E48DD120015ACD6 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -134,6 +189,64 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
+		606040C82E54DC7800EDD4D0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = AIChatMac/AIChatMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"AIChatMac/Preview Content\"";
+				DEVELOPMENT_TEAM = TVNB4R4JHD;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nikolayignatov.AIChatMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		606040C92E54DC7800EDD4D0 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = AIChatMac/AIChatMac.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"AIChatMac/Preview Content\"";
+				DEVELOPMENT_TEAM = TVNB4R4JHD;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.1;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.nikolayignatov.AIChatMac;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 		60FE9B3E2E48DD130015ACD6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -314,6 +427,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		606040CA2E54DC7800EDD4D0 /* Build configuration list for PBXNativeTarget "AIChatMac" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				606040C82E54DC7800EDD4D0 /* Debug */,
+				606040C92E54DC7800EDD4D0 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		60FE9B2D2E48DD120015ACD6 /* Build configuration list for PBXProject "AIChat" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

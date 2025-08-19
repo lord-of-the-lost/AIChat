@@ -1,108 +1,150 @@
-# AIChat с GitHub MCP интеграцией
+# AI Chat - macOS Swift Playground
 
-iOS приложение с **универсальным AI ассистентом**, который может обычно общаться и работать с GitHub через **настоящий MCP (Model Context Protocol)**.
+Интеллектуальный чат с возможностью выполнения Swift кода для macOS.
 
-## 🚀 Что такое MCP?
+## ✨ Функции
 
-MCP (Model Context Protocol) - это стандартный протокол для подключения AI моделей к внешним инструментам и данным. В нашем приложении реализована **настоящая MCP интеграция** с GitHub API, которая предоставляет доступ к:
+- 🤖 **AI чат** - интеллектуальный помощник с поддержкой русского языка
+- 🐳 **MCP Docker** - безопасное выполнение Swift кода в Docker контейнерах  
+- 🍎 **Native Swift** - быстрое выполнение кода локально (fallback)
+- 🔗 **GitHub интеграция** - работа с репозиториями через MCP
+- 📱 **macOS дизайн** - нативный интерфейс с NavigationSplitView
 
-- **User Repositories**: получение списка ваших репозиториев
-- **Issues Management**: просмотр Issues в репозиториях  
-- **Repository Creation**: создание новых репозиториев
-- **Automatic Analysis**: автоматический анализ полученных данных
-
-## Возможности
-
-- 💬 **Универсальный AI ассистент** - отвечает на любые вопросы
-- 🤖 **Умная GitHub интеграция** - предлагает MCP когда нужно
-- 📊 **Автоматический анализ** - анализирует репозитории и Issues
-- 🔐 **Безопасное хранение** API ключей
-- 📱 **Современный iOS** интерфейс
-
-## Настройка
-
-### 1. OpenAI API Key
-Получите API ключ на [OpenAI](https://platform.openai.com/api-keys) и введите его в приложении.
-
-### 2. GitHub Personal Access Token
-Для создания репозиториев необходимо настроить GitHub токен:
-
-1. Перейдите на [GitHub.com](https://github.com)
-2. Settings → Developer settings → Personal access tokens
-3. Generate new token (classic)
-4. Выберите scope: `repo` (полный доступ к репозиториям)
-5. Скопируйте токен и вставьте в приложении
-
-## Использование
-
-### 🎯 Новый флоу работы
-
-1. **Обычное общение**: Задавайте любые вопросы AI ассистенту
-2. **Умное предложение**: При упоминании GitHub/репозиториев AI предложит MCP
-3. **Автоматическое выполнение**: AI сам выберет нужный MCP инструмент
-4. **Анализ результатов**: Автоматический анализ полученных данных
-
-### 💬 Примеры диалогов
-
-**Получение репозиториев:**
-```
-Вы: "Какие у меня репозитории?"
-AI: Хотите использовать MCP для работы с GitHub? Я могу получить список ваших репозиториев.
-[AI автоматически вызывает get_user_repositories и анализирует результат]
-```
-
-**Просмотр Issues:**
-```
-Вы: "Покажи Issues в моем проекте MyApp"  
-AI: [Автоматически вызывает get_issues и создает план работы]
-```
-
-**Обычный разговор:**
-```
-Вы: "Как работает SwiftUI?"
-AI: [Обычный ответ без MCP предложений]
-```
-
-### 🛠 Доступные MCP инструменты
-
-- **get_user_repositories** - Список ваших репозиториев
-- **get_issues** - Issues из конкретного репозитория  
-- **create_repository** - Создание нового репозитория
-
-## Архитектура
-
-### 🏗 Простая и понятная структура
-
-- **UniversalAIAgent**: Единый AI ассистент с MCP интеграцией
-- **MCPGitHubService**: Сервис для работы с GitHub API через MCP
-- **ChatService**: Простая оболочка для AI агента
-- **ChatViewModel**: ViewModel для управления UI
-
-### 🔄 Флоу данных
+## 🏗️ Архитектура
 
 ```
-Пользователь → ChatViewModel → ChatService → UniversalAIAgent
-                                                     ↓
-                              MCP Tools ← MCPGitHubService
-                                  ↓
-                           GitHub API (repos, issues)
-                                  ↓
-                          Автоматический анализ → Пользователю
+macOS App → SwiftExecutionService → MCP Docker (приоритет) / Native Swift (fallback)
 ```
 
-## Технологии
+### Компоненты:
 
-- SwiftUI
-- Foundation
-- GitHub REST API
-- OpenAI API
+- **MacChatView** - основной интерфейс с двумя панелями
+- **SwiftExecutionService** - выбор между MCP Docker и Native Swift
+- **MCPDockerService** - HTTP клиент для MCP сервера
+- **NativeSwiftExecutor** - локальное выполнение Swift
+- **MCP Docker Server** - Flask сервер с Docker интеграцией
 
-## Безопасность
+## 🚀 Быстрый старт
 
-- API ключи хранятся в UserDefaults (для продакшена рекомендуется Keychain)
-- GitHub токен передается через безопасные HTTPS запросы
-- Все API вызовы используют Bearer токены
+### 1. Установка зависимостей
 
-## Лицензия
+```bash
+# Убедитесь что установлен Docker Desktop
+docker --version
 
-MIT License
+# Установите Python зависимости для MCP (опционально)
+cd mcp-docker
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2. Запуск MCP Docker (опционально)
+
+```bash
+cd mcp-docker
+source venv/bin/activate
+python app.py
+```
+
+### 3. Запуск приложения
+
+1. Откройте `AIChat.xcodeproj` в Xcode
+2. Выберите схему "AIChatMac"
+3. Запустите проект (⌘R)
+
+### 4. Настройка
+
+1. Введите ваш OpenAI API ключ
+2. Добавьте GitHub токен (для работы с репозиториями)
+3. Начните общение!
+
+## 💻 Использование
+
+### Примеры Swift кода:
+
+```swift
+// Простые вычисления
+let a = 15
+let b = 25
+print("Сумма: \(a + b)")
+
+// Функции
+func factorial(_ n: Int) -> Int {
+    if n <= 1 { return 1 }
+    return n * factorial(n - 1)
+}
+print("5! = \(factorial(5))")
+
+// Работа с массивами
+let numbers = [1, 2, 3, 4, 5]
+let doubled = numbers.map { $0 * 2 }
+print("Удвоенные: \(doubled)")
+```
+
+### GitHub команды:
+
+- "Покажи мои репозитории"
+- "Какие Issues в проекте X?"
+- "Создай новый репозиторий"
+
+## 🔧 Диагностика
+
+В приложении доступны инструменты диагностики:
+
+- **🔍 Диагностика выполнения** - статус MCP, Native Swift, Sandbox
+- **🐳 Диагностика Docker** - подробная проверка Docker
+
+## 📂 Структура проекта
+
+```
+AIChat/                    # iOS версия (legacy)
+AIChatMac/                 # macOS версия
+├── ContentView.swift      # Главный UI
+├── MacChatViewModel.swift # ViewModel
+├── SwiftExecutionService.swift # Сервис выполнения
+├── MCPDockerService.swift # MCP клиент
+├── NativeSwiftExecutor.swift # Нативный Swift
+├── ExpandingTextEditor.swift # UI компонент
+├── DTO/                   # Модели данных
+└── Services/              # Общие сервисы
+
+mcp-docker/                # MCP Docker сервер
+├── app.py                 # Flask приложение
+├── requirements.txt       # Python зависимости
+└── docker-compose.yml     # Docker конфигурация
+
+swift-playground/          # Docker образы (legacy)
+```
+
+## ⚙️ Настройки
+
+### Entitlements (AIChatMac.entitlements):
+- `app-sandbox = false` - отключен sandbox для запуска внешних процессов
+- Сетевые разрешения для HTTP запросов к MCP
+
+### Приоритеты выполнения:
+1. **MCP Docker** - если доступен (localhost:5002)
+2. **Native Swift** - fallback через системный Swift
+
+## 🛠️ Разработка
+
+### Добавление нового языка:
+
+1. Обновите `mcp-docker/app.py` - добавьте endpoint `/execute/{язык}`
+2. Создайте новый executor в `AIChatMac/`
+3. Обновите `SwiftExecutionService` для выбора исполнителя
+
+### Debugging:
+
+- MCP логи: `mcp-docker/app.py` (Flask debug mode)
+- macOS логи: Xcode Console
+- Docker логи: `docker logs`
+
+## 📄 Лицензия
+
+MIT License - используйте свободно для любых целей.
+
+---
+
+Создано для демонстрации интеграции AI, Docker и macOS приложений 🚀

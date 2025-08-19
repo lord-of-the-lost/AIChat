@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  mcp-docker:
+    build: .
+    ports:
+      - "5002:5002"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp:/tmp
+    environment:
+      - FLASK_ENV=development
+    restart: unless-stopped
