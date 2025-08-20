@@ -264,26 +264,18 @@ final class MCPGitHubService {
     // MARK: - MCP Tool Execution
     
     func executeTool(name: String, arguments: [String: Any]) async -> MCPResult {
-        print("🔧 MCP Service: Выполняем инструмент '\(name)' с аргументами: \(arguments)")
-        
         switch name {
         case "create_repository":
-            print("🔧 MCP Service: Создаем репозиторий...")
             return await handleCreateRepository(arguments)
         case "get_user_info":
-            print("🔧 MCP Service: Получаем информацию о пользователе...")
             return await handleGetUserInfo()
         case "get_user_repositories":
-            print("🔧 MCP Service: Получаем репозитории пользователя...")
             return await handleGetUserRepositories(arguments)
         case "search_repositories":
-            print("🔧 MCP Service: Ищем репозитории...")
             return await handleSearchRepositories(arguments)
         case "get_issues":
-            print("🔧 MCP Service: Получаем Issues...")
             return await handleGetIssues(arguments)
         default:
-            print("❌ MCP Service: Неизвестный инструмент: \(name)")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
@@ -295,10 +287,7 @@ final class MCPGitHubService {
     }
     
     private func handleCreateRepository(_ arguments: [String: Any]) async -> MCPResult {
-        print("🔧 handleCreateRepository: Начинаем обработку аргументов: \(arguments)")
-        
         guard let name = arguments["name"] as? String else {
-            print("❌ handleCreateRepository: Не указано название репозитория")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
@@ -310,11 +299,6 @@ final class MCPGitHubService {
         
         let description = arguments["description"] as? String
         let isPrivate = arguments["isPrivate"] as? Bool ?? false
-        
-        print("🔧 handleCreateRepository: Параметры репозитория:")
-        print("  - Название: \(name)")
-        print("  - Описание: \(description ?? "Не указано")")
-        print("  - Приватный: \(isPrivate)")
         
         let result = await createRepository(
             name: name,
@@ -442,12 +426,8 @@ final class MCPGitHubService {
     }
     
     private func handleGetUserRepositories(_ arguments: [String: Any]) async -> MCPResult {
-        print("🔧 handleGetUserRepositories: Начинаем обработку аргументов: \(arguments)")
-        
         let page = arguments["page"] as? Int ?? 1
         let perPage = arguments["perPage"] as? Int ?? 30
-        
-        print("🔧 handleGetUserRepositories: Вызываем getUserRepositories с page=\(page), perPage=\(perPage)")
         
         let result = await getUserRepositories(page: page, perPage: perPage)
         
@@ -503,10 +483,7 @@ final class MCPGitHubService {
     }
     
     private func handleGetIssues(_ arguments: [String: Any]) async -> MCPResult {
-        print("🔧 handleGetIssues: Начинаем обработку аргументов: \(arguments)")
-        
         guard let owner = arguments["owner"] as? String else {
-            print("❌ handleGetIssues: Не указан owner")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
@@ -517,7 +494,6 @@ final class MCPGitHubService {
         }
         
         guard let repo = arguments["repo"] as? String else {
-            print("❌ handleGetIssues: Не указан repo")
             return MCPResult(content: [
                 MCPContent(
                     type: "text",
@@ -528,8 +504,6 @@ final class MCPGitHubService {
         }
         
         let state = arguments["state"] as? String ?? "open"
-        
-        print("🔧 handleGetIssues: Вызываем getIssues с owner=\(owner), repo=\(repo), state=\(state)")
         
         let result = await getIssues(owner: owner, repo: repo, state: state)
         

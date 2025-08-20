@@ -13,17 +13,21 @@ final class MacChatViewModel: ObservableObject {
     @Published var inputText = ""
     @Published var isLoading = false
     @Published var isExecutingCode = false
+    @Published var isTestingCode = false
     @Published var lastExecutionResult: SwiftExecutionResult?
+    @Published var lastTestResult: TestOrchestrationResult?
     @Published var dockerDiagnostics: String?
     @Published var executionDiagnostics: String?
     @Published var githubToken: String
     
     private let chatService: ChatService
     private let swiftExecutionService: SwiftExecutionService
+    private let testOrchestrator: SwiftTestOrchestrator
     
     init(apiKey: String, githubToken: String = "") {
         self.chatService = ChatService(apiKey: apiKey, githubToken: githubToken)
         self.swiftExecutionService = SwiftExecutionService()
+        self.testOrchestrator = SwiftTestOrchestrator(chatService: chatService, swiftExecutionService: swiftExecutionService)
         self.githubToken = githubToken
     }
     
@@ -41,6 +45,7 @@ final class MacChatViewModel: ObservableObject {
     func clearChat() {
         messages.removeAll()
         lastExecutionResult = nil
+        lastTestResult = nil
         dockerDiagnostics = nil
         executionDiagnostics = nil
     }
@@ -159,8 +164,12 @@ final class MacChatViewModel: ObservableObject {
             
             // Проверяем, есть ли Swift код в сообщении
             let containsSwiftCode = detectSwiftCode(in: userMessage.content)
+            let shouldTest = shouldRunTests(for: userMessage.content)
             
-            if containsSwiftCode {
+            if containsSwiftCode && shouldTest {
+                // Если обнаружен Swift код и запрошено тестирование
+                await runSwiftTests(from: userMessage.content)
+            } else if containsSwiftCode {
                 // Если обнаружен Swift код, выполняем его
                 await executeSwiftCode(from: userMessage.content)
             }
@@ -186,6 +195,15 @@ final class MacChatViewModel: ObservableObject {
         }
     }
     
+    private func shouldRunTests(for text: String) -> Bool {
+        let testKeywords = ["тест", "test", "проверь", "проверить", "unit", "юнит"]
+        let lowerText = text.lowercased()
+        
+        return testKeywords.contains { keyword in
+            lowerText.contains(keyword)
+        }
+    }
+    
     private func executeSwiftCode(from text: String) async {
         isExecutingCode = true
         
@@ -203,6 +221,25 @@ final class MacChatViewModel: ObservableObject {
         }
         
         isExecutingCode = false
+    }
+    
+    private func runSwiftTests(from text: String) async {
+        isTestingCode = true
+        
+        // Извлекаем Swift код из сообщения
+        let extractedCode = extractSwiftCode(from: text)
+        
+        if !extractedCode.isEmpty {
+            let result = await testOrchestrator.orchestrateTesting(for: extractedCode)
+            lastTestResult = result
+            
+            // Добавляем результат тестирования в чат
+            let resultMessage = formatTestResult(result)
+            let systemMessage = ChatMessage(author: .system, content: resultMessage, isUser: false)
+            messages.append(systemMessage)
+        }
+        
+        isTestingCode = false
     }
     
     private func extractSwiftCode(from text: String) -> String {
@@ -250,6 +287,43 @@ final class MacChatViewModel: ObservableObject {
         }
         
         formatted += "**Время выполнения:** \(String(format: "%.2f", result.executionTime))s"
+        
+        return formatted
+    }
+    
+    private func formatTestResult(_ result: TestOrchestrationResult) -> String {
+        var formatted = "🧪 РЕЗУЛЬТАТ АВТОМАТИЧЕСКОГО ТЕСТИРОВАНИЯ\n\n"
+        
+        formatted += "Статус: "
+        formatted += result.success ? "✅ Все тесты прошли успешно" : "❌ Тесты не прошли"
+        formatted += "\n\n"
+        
+        formatted += "Итераций: \(result.totalIterations)\n"
+        formatted += "Общее время: \(String(format: "%.2f", result.totalExecutionTime))s\n\n"
+        
+        if let error = result.error {
+            formatted += "Ошибка: \(error)\n\n"
+        }
+        
+        formatted += "Финальный код:\n\(result.finalSourceCode)\n\n"
+        
+        formatted += "Сгенерированные тесты:\n\(result.finalTestCode)\n\n"
+        
+        // Детали по итерациям
+        formatted += "Детали итераций:\n"
+        for (index, iteration) in result.iterations.enumerated() {
+            formatted += "\nИтерация \(index + 1):\n"
+            formatted += "- Тестов: \(iteration.testSuite.totalTests)\n"
+            formatted += "- Успешно: \(iteration.testSuite.passedTests)\n"
+            formatted += "- Неудачно: \(iteration.testSuite.failedTests)\n"
+            
+            if let fixResult = iteration.fixResult {
+                formatted += "- Код исправлен: \(fixResult.success ? "Да" : "Нет")\n"
+                if !fixResult.explanation.isEmpty {
+                    formatted += "- Объяснение: \(fixResult.explanation)\n"
+                }
+            }
+        }
         
         return formatted
     }

@@ -24,7 +24,7 @@ final class NativeSwiftExecutor {
             
             // Создаем Swift файл
             let swiftFile = tempDirectory.appendingPathComponent("playground.swift")
-            try code.write(to: swiftFile, atomically: true, encoding: .utf8)
+            try code.write(to: swiftFile, atomically: true, encoding: String.Encoding.utf8)
             
             // Выполняем Swift код напрямую
             let result = await runNativeSwift(swiftFile: swiftFile)

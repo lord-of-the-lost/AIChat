@@ -278,14 +278,28 @@ struct MacChatView: View {
                         .font(.headline)
                     Spacer()
                     if viewModel.isExecutingCode {
-                        ProgressView()
-                            .scaleEffect(0.7)
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Выполнение кода...")
+                                .font(.caption)
+                        }
+                    } else if viewModel.isTestingCode {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Тестирование...")
+                                .font(.caption)
+                        }
                     }
                 }
                 .padding()
                 
                 ScrollView {
-                    if let result = viewModel.lastExecutionResult {
+                    if let testResult = viewModel.lastTestResult {
+                        TestResultView(result: testResult)
+                            .padding()
+                    } else if let result = viewModel.lastExecutionResult {
                         ExecutionResultView(result: result)
                             .padding()
                     } else if let executionDiagnostics = viewModel.executionDiagnostics {
@@ -425,8 +439,17 @@ struct MessageRowView: View {
                         .background(message.isUser ? Color.blue.opacity(0.15) : Color.gray.opacity(0.1))
                         .cornerRadius(12)
                         .font(.system(.body, design: .default))
+                        .textSelection(.enabled) // Включаем возможность выделения и копирования текста
                 }
                 .frame(maxWidth: 300, alignment: message.isUser ? .trailing : .leading)
+                .contextMenu {
+                    Button(action: {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.content, forType: .string)
+                    }) {
+                        Label("Копировать", systemImage: "doc.on.doc")
+                    }
+                }
                 
                 if !message.isUser {
                     Spacer()
@@ -434,6 +457,133 @@ struct MessageRowView: View {
             }
         }
         .padding(.vertical, 2)
+    }
+}
+
+// MARK: - TestResultView
+struct TestResultView: View {
+    let result: TestOrchestrationResult
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Статус
+            HStack {
+                Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(result.success ? .green : .red)
+                Text(result.success ? "Тесты прошли успешно" : "Тесты не прошли")
+                    .font(.headline)
+                    .foregroundColor(result.success ? .green : .red)
+            }
+            
+            // Статистика
+            HStack {
+                Text("Итераций: \(result.totalIterations)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text(String(format: "%.2f сек", result.totalExecutionTime))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            // Ошибка
+            if let error = result.error {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Ошибка:")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    Text(error)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundColor(.red)
+                        .padding(8)
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(6)
+                }
+            }
+            
+            // Финальный код
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Финальный код:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                Text(result.finalSourceCode)
+                    .font(.system(.body, design: .monospaced))
+                    .padding(8)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(6)
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(result.finalSourceCode, forType: .string)
+                        }) {
+                            Label("Копировать код", systemImage: "doc.on.doc")
+                        }
+                    }
+            }
+            
+            // Сгенерированные тесты
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Сгенерированные тесты:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                Text(result.finalTestCode)
+                    .font(.system(.body, design: .monospaced))
+                    .padding(8)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(6)
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(result.finalTestCode, forType: .string)
+                        }) {
+                            Label("Копировать тесты", systemImage: "doc.on.doc")
+                        }
+                    }
+            }
+            
+            // Детали итераций
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Детали итераций:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                ForEach(Array(result.iterations.enumerated()), id: \.offset) { index, iteration in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Итерация \(index + 1):")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        
+                        HStack {
+                            Text("Тестов: \(iteration.testSuite.totalTests)")
+                                .font(.caption2)
+                            Text("✅ \(iteration.testSuite.passedTests)")
+                                .font(.caption2)
+                                .foregroundColor(.green)
+                            Text("❌ \(iteration.testSuite.failedTests)")
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                            
+                            if let fixResult = iteration.fixResult {
+                                Text(fixResult.success ? "🔧 Исправлен" : "⚠️ Не исправлен")
+                                    .font(.caption2)
+                                    .foregroundColor(fixResult.success ? .blue : .orange)
+                            }
+                        }
+                    }
+                    .padding(4)
+                    .background(Color.gray.opacity(0.05))
+                    .cornerRadius(4)
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
     }
 }
 
@@ -463,6 +613,15 @@ struct ExecutionResultView: View {
                     .padding(8)
                     .background(Color.gray.opacity(0.1))
                     .cornerRadius(6)
+                    .textSelection(.enabled)
+                    .contextMenu {
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(result.code, forType: .string)
+                        }) {
+                            Label("Копировать код", systemImage: "doc.on.doc")
+                        }
+                    }
             }
             
             // Вывод

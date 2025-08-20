@@ -241,15 +241,12 @@ final class UniversalAIAgent: AIService {
                            let argumentsData = argumentsString.data(using: .utf8),
                            let arguments = try? JSONSerialization.jsonObject(with: argumentsData) as? [String: Any] {
                             
-                            print("🔧 AI Agent: Вызываем MCP инструмент '\(name)' с аргументами: \(arguments)")
-                            
                             // Выполняем MCP инструмент
                             if let mcpService = mcpService {
                                 let mcpResult = await mcpService.executeTool(name: name, arguments: arguments)
                                 
                                 // Извлекаем текст из MCP результата
                                 if let content = mcpResult.content.first?.text {
-                                    print("🔧 AI Agent: Получен результат MCP: \(content)")
                                     
                                     // Отправляем статистику в мониторинг
                                     await sendMCPStatistics(
@@ -273,7 +270,7 @@ final class UniversalAIAgent: AIService {
                 }
             }
         } catch {
-            print("❌ Universal AI Agent Error:", error)
+            // Ошибка обработки
         }
         return nil
     }
@@ -316,7 +313,7 @@ final class UniversalAIAgent: AIService {
                 return analysis.trimmingCharacters(in: .whitespacesAndNewlines)
             }
         } catch {
-            print("❌ Analysis Error:", error)
+            // Ошибка анализа
         }
         
         return ""
@@ -327,7 +324,6 @@ final class UniversalAIAgent: AIService {
         let monitorURL = "http://localhost:5001/mcp/event"
         
         guard let url = URL(string: monitorURL) else {
-            print("❌ Неверный URL мониторинга")
             return
         }
         
@@ -353,15 +349,12 @@ final class UniversalAIAgent: AIService {
             let (_, response) = try await URLSession.shared.data(for: request)
             
             if let httpResponse = response as? HTTPURLResponse {
-                if httpResponse.statusCode == 200 {
-                    print("📊 Статистика MCP отправлена в мониторинг")
-                } else {
-                    print("⚠️ Ошибка отправки статистики: \(httpResponse.statusCode)")
+                if httpResponse.statusCode != 200 {
+                    // Ошибка отправки статистики
                 }
             }
         } catch {
-            print("⚠️ Ошибка отправки статистики MCP: \(error)")
-            // Не критично, если мониторинг недоступен
+            // Ошибка отправки статистики
         }
     }
 }

@@ -30,7 +30,7 @@ struct ExpandingTextEditor: View {
                             .onAppear {
                                 updateHeight(geometry.size.height)
                             }
-                            .onChange(of: text) { _ in
+                            .onChange(of: text) {
                                 updateHeight(geometry.size.height)
                             }
                     }
