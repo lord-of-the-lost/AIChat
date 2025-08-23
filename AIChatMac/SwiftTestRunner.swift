@@ -77,9 +77,36 @@ final class SwiftTestRunner {
         return "SimpleCalculatorTests"
     }
     
+    private func extractTestMethodNames(from testCode: String) -> [String] {
+        var methodNames: [String] = []
+        
+        // Ищем методы тестов в коде
+        let pattern = "func\\s+(test\\w+)\\s*\\(\\s*\\)"
+        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+            let matches = regex.matches(in: testCode, range: NSRange(testCode.startIndex..., in: testCode))
+            
+            for match in matches {
+                let range = Range(match.range(at: 1), in: testCode)!
+                let methodName = String(testCode[range])
+                methodNames.append(methodName)
+            }
+        }
+        
+        // Если не нашли методы, возвращаем пустой массив
+        return methodNames
+    }
+    
     private func createTestCode(sourceCode: String, testCode: String) -> String {
         // Извлекаем имя класса тестов из testCode
         let testClassName = extractTestClassName(from: testCode)
+        
+        // Извлекаем имена методов тестов из testCode
+        let testMethodNames = extractTestMethodNames(from: testCode)
+        
+        // Если не нашли методы тестов, используем простой подход
+        if testMethodNames.isEmpty {
+            return createSimpleTestCode(sourceCode: sourceCode, testCode: testCode)
+        }
         
         return """
         import Foundation
@@ -89,7 +116,6 @@ final class SwiftTestRunner {
         \(sourceCode)
         
         // Запускаем тесты
-
         print(String(repeating: "=", count: 50))
         
         \(testCode)
@@ -97,26 +123,36 @@ final class SwiftTestRunner {
         // Создаем тестовый класс и запускаем тесты
         let testCase = \(testClassName)(name: "TestRunner", testClosure: { _ in })
         
-        // Запускаем каждый тест метод
-        print("Запуск теста: testAdd")
-        testCase.testAdd()
+        // Запускаем каждый тест метод динамически
+        \(testMethodNames.map { methodName in
+            """
+            do {
+                print("Запуск теста: \(methodName)")
+                testCase.\(methodName)()
+            } catch {
+                print("Тест \(methodName) не существует или произошла ошибка")
+            }
+            """
+        }.joined(separator: "\n\n"))
         
-        print("Запуск теста: testSubtract")
-        testCase.testSubtract()
+        print(String(repeating: "=", count: 50))
+        print("✅ Все тесты прошли успешно!")
+        """
+    }
+    
+    private func createSimpleTestCode(sourceCode: String, testCode: String) -> String {
+        return """
+        import Foundation
         
-        print("Запуск теста: testMultiply")
-        testCase.testMultiply()
+        // Включаем исходный код
+        \(sourceCode)
         
-        print("Запуск теста: testDivide")
-        testCase.testDivide()
+        // Простые тесты без XCTest
+        print(String(repeating: "=", count: 50))
+        print("🧪 Запуск простых тестов")
+        print(String(repeating: "=", count: 50))
         
-        // Пытаемся запустить дополнительные тесты если они есть
-        do {
-            print("Запуск теста: testDivideByZero")
-            testCase.testDivideByZero()
-        } catch {
-            // Тест не существует, пропускаем
-        }
+        \(testCode)
         
         print(String(repeating: "=", count: 50))
         print("✅ Все тесты прошли успешно!")

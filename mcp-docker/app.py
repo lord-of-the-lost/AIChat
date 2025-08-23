@@ -1,83 +1,74 @@
 #!/usr/bin/env python3
 """
-MCP Docker Service - выполнение кода в Docker контейнерах
+MCP Docker Service - выполнение кода в Docker контейнерах (исправленная версия)
 """
 
 from flask import Flask, request, jsonify
-import docker
+import subprocess
 import tempfile
 import os
 import time
 import logging
+import json
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация Docker клиента
-def init_docker_client():
+def run_docker_command(cmd, timeout=30):
+    """Выполнение Docker команды через subprocess"""
     try:
-        # Пробуем разные способы подключения к Docker
-        import os
-        
-        # Способ 1: стандартное подключение
-        try:
-            client = docker.from_env()
-            # Проверяем подключение
-            info = client.info()
-            app.logger.info("🐳 Docker клиент инициализирован (стандартный)")
-            app.logger.info(f"📋 Docker версия: {info.get('ServerVersion', 'неизвестно')}")
-            return client
-        except Exception as e1:
-            app.logger.warning(f"⚠️ Стандартное подключение не удалось: {e1}")
-        
-        # Способ 2: через пользовательский socket
-        try:
-            user_socket = f"unix://{os.path.expanduser('~')}/.docker/run/docker.sock"
-            client = docker.DockerClient(base_url=user_socket)
-            # Проверяем подключение
-            info = client.info()
-            app.logger.info(f"🐳 Docker клиент инициализирован (пользовательский socket: {user_socket})")
-            app.logger.info(f"📋 Docker версия: {info.get('ServerVersion', 'неизвестно')}")
-            return client
-        except Exception as e2:
-            app.logger.warning(f"⚠️ Пользовательский socket не удался: {e2}")
-        
-        # Способ 3: через TCP (если настроен)
-        try:
-            client = docker.DockerClient(base_url="tcp://localhost:2376")
-            client.ping()
-            app.logger.info("🐳 Docker клиент инициализирован (TCP)")
-            return client
-        except Exception as e3:
-            app.logger.warning(f"⚠️ TCP подключение не удалось: {e3}")
-        
-        app.logger.error("❌ Все способы подключения к Docker не удались")
-        return None
-        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout
+        )
+        return {
+            "success": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode
+        }
+    except subprocess.TimeoutExpired:
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": "Timeout expired",
+            "returncode": -1
+        }
     except Exception as e:
-        app.logger.error(f"❌ Критическая ошибка инициализации Docker: {e}")
-        return None
+        return {
+            "success": False,
+            "stdout": "",
+            "stderr": str(e),
+            "returncode": -1
+        }
 
-docker_client = init_docker_client()
+def test_docker():
+    """Тест подключения к Docker"""
+    result = run_docker_command(["docker", "version", "--format", "json"])
+    if result["success"]:
+        try:
+            version_info = json.loads(result["stdout"])
+            app.logger.info(f"🐳 Docker версия: {version_info.get('Server', {}).get('Version', 'неизвестно')}")
+            return True
+        except:
+            pass
+    return False
 
 @app.route('/health', methods=['GET'])
 def health_check():
     """Проверка здоровья сервиса"""
-    if docker_client is None:
-        return jsonify({"status": "error", "message": "Docker недоступен"}), 500
-    
-    try:
-        # Проверяем что Docker работает
-        docker_client.ping()
+    if test_docker():
         return jsonify({
             "status": "healthy",
             "docker": "available",
             "timestamp": time.time()
         })
-    except Exception as e:
+    else:
         return jsonify({
             "status": "error", 
-            "message": f"Docker ping failed: {str(e)}"
+            "message": "Docker недоступен"
         }), 500
 
 @app.route('/execute/swift', methods=['POST'])
@@ -103,131 +94,52 @@ def execute_swift():
             temp_file = f.name
         
         try:
-            # Создаем временную директорию для монтирования
-            temp_dir = os.path.dirname(temp_file)
-            container_file = f"/app/{os.path.basename(temp_file)}"
+            # Получаем абсолютный путь к директории
+            temp_dir = os.path.dirname(os.path.abspath(temp_file))
+            filename = os.path.basename(temp_file)
             
             app.logger.info(f"📁 Монтируем {temp_dir} в контейнер")
             
-            # Запускаем Swift в Docker контейнере
-            result = docker_client.containers.run(
-                image="swift:5.9",
-                command=f"swift {container_file}",
-                volumes={temp_dir: {'bind': '/app', 'mode': 'rw'}},
-                working_dir="/app",
-                remove=True,
-                network_mode="none",  # Изолируем сеть
-                detach=False,
-                stdout=True,
-                stderr=True
-            )
+            # Выполняем Swift код в Docker
+            cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{temp_dir}:/app",
+                "-w", "/app",
+                "swift:5.9",
+                "swift", filename
+            ]
             
-            app.logger.info("✅ Контейнер завершил работу")
+            result = run_docker_command(cmd, timeout)
             
-            # Парсим результат
-            if isinstance(result, bytes):
-                output = result.decode('utf-8')
-                success = True
-                error = ""
-            else:
-                output = str(result)
-                success = True
-                error = ""
-                
-        except docker.errors.ContainerError as e:
-            app.logger.error(f"❌ Ошибка контейнера: {e}")
-            success = False
-            output = ""
-            # Получаем stderr из исключения
-            stderr_text = ""
-            if hasattr(e, 'stderr') and e.stderr:
-                stderr_text = e.stderr.decode('utf-8') if isinstance(e.stderr, bytes) else str(e.stderr)
-            error = f"Ошибка выполнения: {stderr_text or str(e)}"
-            
-        except Exception as e:
-            app.logger.error(f"❌ Общая ошибка: {e}")
-            success = False
-            output = ""
-            error = f"Ошибка Docker: {str(e)}"
-            
-        finally:
             # Удаляем временный файл
-            try:
+            os.unlink(temp_file)
+            
+            if result["success"]:
+                return jsonify({
+                    "success": True,
+                    "output": result["stdout"],
+                    "error": result["stderr"],
+                    "execution_time": time.time()
+                })
+            else:
+                return jsonify({
+                    "success": False,
+                    "output": result["stdout"],
+                    "error": result["stderr"],
+                    "execution_time": time.time()
+                })
+                
+        except Exception as e:
+            # Удаляем временный файл в случае ошибки
+            if os.path.exists(temp_file):
                 os.unlink(temp_file)
-            except:
-                pass
-        
-        return jsonify({
-            "success": success,
-            "output": output,
-            "error": error,
-            "language": "swift"
-        })
-        
+            raise e
+            
     except Exception as e:
-        app.logger.error(f"❌ Критическая ошибка: {e}")
+        app.logger.error(f"❌ Ошибка выполнения Swift кода: {e}")
         return jsonify({
             "success": False,
-            "error": f"Серверная ошибка: {str(e)}"
-        }), 500
-
-@app.route('/execute/python', methods=['POST'])
-def execute_python():
-    """Выполнение Python кода в Docker"""
-    try:
-        data = request.get_json()
-        code = data.get('code', '')
-        timeout = data.get('timeout', 30)
-        
-        app.logger.info(f"🐍 Выполняем Python код")
-        
-        # Аналогично Swift, но для Python
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
-            f.write(code)
-            temp_file = f.name
-        
-        try:
-            temp_dir = os.path.dirname(temp_file)
-            container_file = f"/app/{os.path.basename(temp_file)}"
-            
-            result = docker_client.containers.run(
-                image="python:3.11-slim",
-                command=f"python {container_file}",
-                volumes={temp_dir: {'bind': '/app', 'mode': 'rw'}},
-                working_dir="/app",
-                remove=True,
-                network_mode=None,
-                timeout=timeout,
-                capture_output=True,
-                text=True
-            )
-            
-            success = True
-            output = str(result)
-            error = ""
-            
-        except docker.errors.ContainerError as e:
-            success = False
-            output = ""
-            error = f"Ошибка выполнения: {e.stderr.decode('utf-8') if e.stderr else str(e)}"
-            
-        finally:
-            try:
-                os.unlink(temp_file)
-            except:
-                pass
-        
-        return jsonify({
-            "success": success,
-            "output": output,
-            "error": error,
-            "language": "python"
-        })
-        
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": f"Серверная ошибка: {str(e)}"
+            "error": str(e)
         }), 500
 
 if __name__ == '__main__':

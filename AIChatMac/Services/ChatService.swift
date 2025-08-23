@@ -207,7 +207,7 @@ final class UniversalAIAgent: AIService {
         messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
         
         var payload: [String: Any] = [
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4o",
             "messages": allMessages
         ]
         
@@ -296,7 +296,7 @@ final class UniversalAIAgent: AIService {
         """
         
         let payload: [String: Any] = [
-            "model": "gpt-3.5-turbo",
+            "model": "gpt-4o",
             "messages": [["role": "user", "content": analysisPrompt]]
         ]
         
