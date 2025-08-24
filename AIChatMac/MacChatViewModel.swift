@@ -16,9 +16,12 @@ final class MacChatViewModel: ObservableObject {
     @Published var isTestingCode = false
     @Published var lastExecutionResult: SwiftExecutionResult?
     @Published var lastTestResult: TestOrchestrationResult?
+    @Published var lastReviewResult: CodeReviewResult?
     @Published var dockerDiagnostics: String?
     @Published var executionDiagnostics: String?
     @Published var githubToken: String
+    @Published var reviewProgress: Double = 0.0
+    @Published var isReviewing = false
     
     private let chatService: ChatService
     private let swiftExecutionService: SwiftExecutionService
@@ -46,8 +49,25 @@ final class MacChatViewModel: ObservableObject {
         messages.removeAll()
         lastExecutionResult = nil
         lastTestResult = nil
+        lastReviewResult = nil
         dockerDiagnostics = nil
         executionDiagnostics = nil
+        reviewProgress = 0.0
+        isReviewing = false
+    }
+    
+    func updateReviewProgress(_ progress: Double) {
+        reviewProgress = progress
+    }
+    
+    func startReview() {
+        isReviewing = true
+        reviewProgress = 0.0
+    }
+    
+    func finishReview() {
+        isReviewing = false
+        reviewProgress = 1.0
     }
     
     func runDockerDiagnostics() {
@@ -162,28 +182,125 @@ final class MacChatViewModel: ObservableObject {
         Task {
             isLoading = true
             
-            // Проверяем, есть ли Swift код в сообщении
-            let containsSwiftCode = detectSwiftCode(in: userMessage.content)
-            let shouldTest = shouldRunTests(for: userMessage.content)
-            
-            if containsSwiftCode && shouldTest {
-                // Если обнаружен Swift код и запрошено тестирование
-                await runSwiftTests(from: userMessage.content)
-            } else if containsSwiftCode {
-                // Если обнаружен Swift код, выполняем его
-                await executeSwiftCode(from: userMessage.content)
-            }
-            
-            // Отправляем все сообщения через AI агент
-            let result = await chatService.sendMessage(messages)
-            
-            if let result = result {
-                let aiMessage = ChatMessage(author: .aiAgent, content: result, isUser: false)
-                messages.append(aiMessage)
+            // Проверяем, есть ли GitHub PR URL в сообщении
+            if let prURL = extractGitHubPRURL(from: userMessage.content) {
+                await reviewGitHubPR(prURL: prURL)
+            } else {
+                // Проверяем, есть ли Swift код в сообщении
+                let containsSwiftCode = detectSwiftCode(in: userMessage.content)
+                let shouldTest = shouldRunTests(for: userMessage.content)
+                
+                if containsSwiftCode && shouldTest {
+                    // Если обнаружен Swift код и запрошено тестирование
+                    await runSwiftTests(from: userMessage.content)
+                } else if containsSwiftCode {
+                    // Если обнаружен Swift код, выполняем его
+                    await executeSwiftCode(from: userMessage.content)
+                }
+                
+                // Отправляем все сообщения через AI агент
+                let result = await chatService.sendMessage(messages)
+                
+                if let result = result {
+                    let aiMessage = ChatMessage(author: .aiAgent, content: result, isUser: false)
+                    messages.append(aiMessage)
+                }
             }
             
             isLoading = false
         }
+    }
+    
+    private func extractGitHubPRURL(from text: String) -> String? {
+        // Ищем GitHub PR URL в тексте
+        let pattern = "https://github\\.com/[^/]+/[^/]+/pull/\\d+"
+        let regex = try? NSRegularExpression(pattern: pattern)
+        
+        if let match = regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let urlRange = Range(match.range, in: text)!
+            return String(text[urlRange])
+        }
+        
+        return nil
+    }
+    
+    private func reviewGitHubPR(prURL: String) async {
+        // Начинаем ревью
+        startReview()
+        
+        // Создаем сервисы для ревью
+        let githubPRService = GitHubPRService(githubToken: githubToken)
+        let codeReviewService = CodeReviewService(aiService: chatService, githubPRService: githubPRService)
+        
+        // Выполняем ревью с отслеживанием прогресса
+        let result = await codeReviewService.reviewPullRequest(from: prURL, progressCallback: { progress in
+            Task { @MainActor in
+                self.updateReviewProgress(progress)
+            }
+        })
+        
+        // Завершаем ревью
+        finishReview()
+        
+        switch result {
+        case .success(let reviewResult):
+            lastReviewResult = reviewResult
+            
+            // Добавляем результат ревью в чат
+            let reviewMessage = formatReviewResult(reviewResult)
+            let systemMessage = ChatMessage(author: .system, content: reviewMessage, isUser: false)
+            messages.append(systemMessage)
+            
+        case .failure(let error):
+            let errorMessage = "❌ Ошибка при ревью PR: \(error.localizedDescription)"
+            let errorChatMessage = ChatMessage(author: .system, content: errorMessage, isUser: false)
+            messages.append(errorChatMessage)
+        }
+    }
+    
+    private func formatReviewResult(_ result: CodeReviewResult) -> String {
+        var message = """
+        ## 🔍 Ревью Pull Request завершено!
+        
+        ### 📋 Информация о PR:
+        - **Название:** \(result.pullRequest.title)
+        - **Автор:** \(result.pullRequest.user.login)
+        - **Номер:** #\(result.pullRequest.number)
+        - **Ветка:** \(result.pullRequest.head.ref) → \(result.pullRequest.base.ref)
+        - **Изменения:** +\(result.pullRequest.additions) -\(result.pullRequest.deletions) в \(result.pullRequest.changedFiles) файлах
+        
+        ### 📊 Результаты ревью:
+        - **Общая оценка:** \(result.review.overallScore)/100
+        - **Критических проблем:** \(result.review.issues.filter { $0.severity == .critical }.count)
+        - **Высокого приоритета:** \(result.review.issues.filter { $0.severity == .high }.count)
+        - **Среднего приоритета:** \(result.review.issues.filter { $0.severity == .medium }.count)
+        - **Низкого приоритета:** \(result.review.issues.filter { $0.severity == .low }.count)
+        - **Предложений:** \(result.review.suggestions.count)
+        
+        ### 🚨 Созданные Issues:
+        """
+        
+        if result.createdIssues.isEmpty {
+            message += "\n- Проблем не обнаружено, issues не созданы"
+        } else {
+            for issue in result.createdIssues {
+                message += "\n- [Issue #\(issue.number)](\(issue.htmlUrl)): \(issue.title)"
+            }
+        }
+        
+        message += """
+        
+        ### 💬 Комментарий к PR:
+        - \(result.commentAdded ? "✅ Добавлен" : "❌ Не добавлен")
+        
+        ### 📝 Краткое резюме:
+        \(result.review.summary)
+        
+        ---
+        *Ревью выполнено автоматически с помощью AI*
+        """
+        
+        return message
     }
     
     private func detectSwiftCode(in text: String) -> Bool {

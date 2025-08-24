@@ -48,9 +48,12 @@ final class MCPGitHubService {
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
         
         let repository = GitHubRepository(
+            id: 0, // Будет установлено сервером
             name: name,
+            fullName: "", // Будет установлено сервером
             description: description,
             isPrivate: isPrivate,
+            htmlUrl: "", // Будет установлено сервером
             autoInit: true
         )
         
@@ -562,14 +565,19 @@ final class MCPGitHubService {
 // MARK: - Data Models
 
 struct GitHubRepository: Codable {
+    let id: Int
     let name: String
+    let fullName: String
     let description: String?
     let isPrivate: Bool
-    let autoInit: Bool
+    let htmlUrl: String
+    let autoInit: Bool?
     
     enum CodingKeys: String, CodingKey {
-        case name, description
+        case id, name, description
+        case fullName = "full_name"
         case isPrivate = "private"
+        case htmlUrl = "html_url"
         case autoInit = "auto_init"
     }
 }
@@ -600,10 +608,12 @@ struct GitHubUser: Codable {
     let name: String?
     let email: String?
     let avatarUrl: String
+    let htmlUrl: String?
     
     enum CodingKeys: String, CodingKey {
         case login, id, name, email
         case avatarUrl = "avatar_url"
+        case htmlUrl = "html_url"
     }
 }
 

@@ -14,15 +14,103 @@ protocol AIService {
 final class ChatService {
     private let aiAgent: UniversalAIAgent
     private let apiKey: String
+    private let githubToken: String
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
     
     init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
+        self.githubToken = githubToken ?? ""
         self.aiAgent = UniversalAIAgent(apiKey: apiKey, githubToken: githubToken)
     }
     
     func sendMessage(_ messages: [ChatMessage]) async -> String? {
-        await aiAgent.sendMessage(messages: messages)
+        // Проверяем, есть ли GitHub PR URL в последнем сообщении
+        if let lastMessage = messages.last,
+           lastMessage.isUser,
+           let prURL = extractGitHubPRURL(from: lastMessage.content) {
+            return await handleGitHubPRReview(prURL: prURL, messages: messages)
+        }
+        
+        return await aiAgent.sendMessage(messages: messages)
+    }
+    
+    // Метод для прямого вызова AI без проверки PR URL
+    func sendDirectMessage(_ messages: [ChatMessage]) async -> String? {
+        return await aiAgent.sendMessage(messages: messages)
+    }
+    
+    private func extractGitHubPRURL(from text: String) -> String? {
+        // Ищем GitHub PR URL в тексте
+        let pattern = "https://github\\.com/[^/]+/[^/]+/pull/\\d+"
+        let regex = try? NSRegularExpression(pattern: pattern)
+        
+        if let match = regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let urlRange = Range(match.range, in: text)!
+            return String(text[urlRange])
+        }
+        
+        return nil
+    }
+    
+    private func handleGitHubPRReview(prURL: String, messages: [ChatMessage]) async -> String? {
+        // Создаем сервисы для ревью
+        let githubPRService = GitHubPRService(githubToken: githubToken)
+        let codeReviewService = CodeReviewService(aiService: self, githubPRService: githubPRService)
+        
+        // Выполняем ревью
+        let result = await codeReviewService.reviewPullRequest(from: prURL)
+        
+        switch result {
+        case .success(let reviewResult):
+            return createReviewResponse(reviewResult: reviewResult)
+        case .failure(let error):
+            return "❌ Ошибка при ревью PR: \(error.localizedDescription)"
+        }
+    }
+    
+    private func createReviewResponse(reviewResult: CodeReviewResult) -> String { // 'CodeReviewResult' is ambiguous for type lookup in this context
+        var response = """
+        ## 🔍 Ревью Pull Request завершено!
+        
+        ### 📋 Информация о PR:
+        - **Название:** \(reviewResult.pullRequest.title)
+        - **Автор:** \(reviewResult.pullRequest.user.login)
+        - **Номер:** #\(reviewResult.pullRequest.number)
+        - **Ветка:** \(reviewResult.pullRequest.head.ref) → \(reviewResult.pullRequest.base.ref)
+        - **Изменения:** +\(reviewResult.pullRequest.additions) -\(reviewResult.pullRequest.deletions) в \(reviewResult.pullRequest.changedFiles) файлах
+        
+        ### 📊 Результаты ревью:
+        - **Общая оценка:** \(reviewResult.review.overallScore)/100
+        - **Критических проблем:** \(reviewResult.review.issues.filter { $0.severity == .critical }.count)
+        - **Высокого приоритета:** \(reviewResult.review.issues.filter { $0.severity == .high }.count)
+        - **Среднего приоритета:** \(reviewResult.review.issues.filter { $0.severity == .medium }.count)
+        - **Низкого приоритета:** \(reviewResult.review.issues.filter { $0.severity == .low }.count)
+        - **Предложений:** \(reviewResult.review.suggestions.count)
+        
+        ### 🚨 Созданные Issues:
+        """
+        
+        if reviewResult.createdIssues.isEmpty {
+            response += "\n- Проблем не обнаружено, issues не созданы"
+        } else {
+            for issue in reviewResult.createdIssues {
+                response += "\n- [Issue #\(issue.number)](\(issue.htmlUrl)): \(issue.title)"
+            }
+        }
+        
+        response += """
+        
+        ### 💬 Комментарий к PR:
+        - \(reviewResult.commentAdded ? "✅ Добавлен" : "❌ Не добавлен")
+        
+        ### 📝 Краткое резюме:
+        \(reviewResult.review.summary)
+        
+        ---
+        *Ревью выполнено автоматически с помощью AI*
+        """
+        
+        return response
     }
     
     func validateKey() async -> Bool {
@@ -207,7 +295,7 @@ final class UniversalAIAgent: AIService {
         messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
         
         var payload: [String: Any] = [
-            "model": "gpt-4o",
+            "model": "gpt-3.5-turbo",
             "messages": allMessages
         ]
         
@@ -296,7 +384,7 @@ final class UniversalAIAgent: AIService {
         """
         
         let payload: [String: Any] = [
-            "model": "gpt-4o",
+            "model": "gpt-3.5-turbo",
             "messages": [["role": "user", "content": analysisPrompt]]
         ]
         

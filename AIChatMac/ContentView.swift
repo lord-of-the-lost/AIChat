@@ -266,6 +266,8 @@ struct MacChatView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+                    
+
                 }
                 .padding()
             }
@@ -291,12 +293,41 @@ struct MacChatView: View {
                             Text("Тестирование...")
                                 .font(.caption)
                         }
+                    } else if viewModel.isReviewing {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                            Text("Ревью PR...")
+                                .font(.caption)
+                        }
                     }
                 }
                 .padding()
                 
+                if viewModel.isReviewing {
+                    VStack(spacing: 8) {
+                        ProgressView(value: viewModel.reviewProgress)
+                            .progressViewStyle(LinearProgressViewStyle())
+                            .frame(height: 6)
+                        
+                        HStack {
+                            Text("Прогресс ревью:")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("\(Int(viewModel.reviewProgress * 100))%")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                
                 ScrollView {
-                    if let testResult = viewModel.lastTestResult {
+                    if let reviewResult = viewModel.lastReviewResult {
+                        ReviewResultView(result: reviewResult)
+                            .padding()
+                    } else if let testResult = viewModel.lastTestResult {
                         TestResultView(result: testResult)
                             .padding()
                     } else if let result = viewModel.lastExecutionResult {
@@ -578,6 +609,141 @@ struct TestResultView: View {
                     .padding(4)
                     .background(Color.gray.opacity(0.05))
                     .cornerRadius(4)
+                }
+            }
+        }
+        .padding()
+        .background(Color(NSColor.controlBackgroundColor))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - ReviewResultView
+struct ReviewResultView: View {
+    let result: CodeReviewResult
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Заголовок
+            HStack {
+                Image(systemName: "magnifyingglass.circle.fill")
+                    .foregroundColor(.blue)
+                Text("Ревью Pull Request")
+                    .font(.headline)
+                    .foregroundColor(.blue)
+            }
+            
+            // Информация о PR
+            VStack(alignment: .leading, spacing: 8) {
+                Text("📋 Информация о PR:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("**Название:** \(result.pullRequest.title)")
+                    Text("**Автор:** \(result.pullRequest.user.login)")
+                    Text("**Номер:** #\(result.pullRequest.number)")
+                    Text("**Ветка:** \(result.pullRequest.head.ref) → \(result.pullRequest.base.ref)")
+                    Text("**Изменения:** +\(result.pullRequest.additions) -\(result.pullRequest.deletions) в \(result.pullRequest.changedFiles) файлах")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            
+            // Результаты ревью
+            VStack(alignment: .leading, spacing: 8) {
+                Text("📊 Результаты ревью:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Общая оценка: \(result.review.overallScore)/100")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                        
+                        Text("Критических: \(result.review.issues.filter { $0.severity == .critical }.count)")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                        
+                        Text("Высокого приоритета: \(result.review.issues.filter { $0.severity == .high }.count)")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                        
+                        Text("Среднего приоритета: \(result.review.issues.filter { $0.severity == .medium }.count)")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                        
+                        Text("Низкого приоритета: \(result.review.issues.filter { $0.severity == .low }.count)")
+                            .font(.caption2)
+                            .foregroundColor(.green)
+                        
+                        Text("Предложений: \(result.review.suggestions.count)")
+                            .font(.caption2)
+                            .foregroundColor(.purple)
+                    }
+                    
+                    Spacer()
+                }
+            }
+            
+            // Созданные Issues
+            VStack(alignment: .leading, spacing: 8) {
+                Text("🚨 Созданные Issues:")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                
+                if result.createdIssues.isEmpty {
+                    Text("Проблем не обнаружено, issues не созданы")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                } else {
+                    ForEach(result.createdIssues, id: \.id) { issue in
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                            Text("Issue #\(issue.number): \(issue.title)")
+                                .font(.caption)
+                            
+                            Spacer()
+                            
+                            Button("Открыть") {
+                                if let url = URL(string: issue.htmlUrl) {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        .padding(4)
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(4)
+                    }
+                }
+            }
+            
+            // Статус комментария
+            HStack {
+                Image(systemName: result.commentAdded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(result.commentAdded ? .green : .red)
+                Text("Комментарий к PR: \(result.commentAdded ? "Добавлен" : "Не добавлен")")
+                    .font(.caption)
+                    .foregroundColor(result.commentAdded ? .green : .red)
+            }
+            
+            // Краткое резюме
+            if !result.review.summary.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("📝 Краткое резюме:")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    
+                    Text(result.review.summary)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(8)
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(6)
                 }
             }
         }
