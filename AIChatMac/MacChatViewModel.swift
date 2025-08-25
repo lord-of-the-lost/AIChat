@@ -23,6 +23,11 @@ final class MacChatViewModel: ObservableObject {
     @Published var reviewProgress: Double = 0.0
     @Published var isReviewing = false
     
+    // AI параметры для тестирования
+    @Published var aiTemperature: Double = 0.7
+    @Published var aiMaxTokens: Int = 4000
+    @Published var showAISettings = false
+    
     private let chatService: ChatService
     private let swiftExecutionService: SwiftExecutionService
     private let testOrchestrator: SwiftTestOrchestrator
@@ -56,6 +61,15 @@ final class MacChatViewModel: ObservableObject {
         isReviewing = false
     }
     
+    func cleanupOldMessages() {
+        let maxMessages = 30
+        if messages.count > maxMessages {
+            let messagesToRemove = messages.count - maxMessages
+            messages.removeFirst(messagesToRemove)
+            print("🧹 Удалено \(messagesToRemove) старых сообщений")
+        }
+    }
+    
     func updateReviewProgress(_ progress: Double) {
         reviewProgress = progress
     }
@@ -68,6 +82,18 @@ final class MacChatViewModel: ObservableObject {
     func finishReview() {
         isReviewing = false
         reviewProgress = 1.0
+    }
+    
+    func updateAITemperature(_ temperature: Double) {
+        aiTemperature = temperature
+        // Обновляем параметры в ChatService
+        chatService.updateAIParameters(temperature: temperature, maxTokens: aiMaxTokens)
+    }
+    
+    func updateAIMaxTokens(_ maxTokens: Int) {
+        aiMaxTokens = maxTokens
+        // Обновляем параметры в ChatService
+        chatService.updateAIParameters(temperature: aiTemperature, maxTokens: maxTokens)
     }
     
     func runDockerDiagnostics() {
@@ -182,6 +208,13 @@ final class MacChatViewModel: ObservableObject {
         Task {
             isLoading = true
             
+            // Очищаем старые сообщения для избежания переполнения
+            cleanupOldMessages()
+            
+            // Обновляем параметры AI перед отправкой сообщения
+            chatService.updateAIParameters(temperature: aiTemperature, maxTokens: aiMaxTokens)
+            print("🤖 AI параметры обновлены: Temperature = \(aiTemperature), MaxTokens = \(aiMaxTokens)")
+            
             // Проверяем, есть ли GitHub PR URL в сообщении
             if let prURL = extractGitHubPRURL(from: userMessage.content) {
                 await reviewGitHubPR(prURL: prURL)
@@ -199,11 +232,17 @@ final class MacChatViewModel: ObservableObject {
                 }
                 
                 // Отправляем все сообщения через AI агент
+                print("📤 Отправляем \(messages.count) сообщений в AI...")
                 let result = await chatService.sendMessage(messages)
                 
                 if let result = result {
+                    print("✅ Получен ответ от AI (\(result.count) символов)")
                     let aiMessage = ChatMessage(author: .aiAgent, content: result, isUser: false)
                     messages.append(aiMessage)
+                } else {
+                    print("❌ Не получен ответ от AI")
+                    let errorMessage = ChatMessage(author: .system, content: "❌ Не удалось получить ответ от AI. Попробуйте повторить запрос.", isUser: false)
+                    messages.append(errorMessage)
                 }
             }
             

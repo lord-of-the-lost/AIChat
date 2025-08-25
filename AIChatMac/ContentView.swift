@@ -224,9 +224,14 @@ struct MacChatView: View {
                     Text("История чата")
                         .font(.headline)
                     Spacer()
+                    Button(action: { viewModel.showAISettings.toggle() }) {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .help("Настройки AI")
                     Button(action: viewModel.clearChat) {
                         Image(systemName: "trash")
                     }
+                    .help("Очистить чат")
                 }
                 .padding()
                 
@@ -270,6 +275,87 @@ struct MacChatView: View {
 
                 }
                 .padding()
+                
+                // Панель настроек AI
+                if viewModel.showAISettings {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("🧠 Настройки AI")
+                            .font(.headline)
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Температура: \(String(format: "%.1f", viewModel.aiTemperature))")
+                                .font(.caption)
+                            
+                            HStack {
+                                Text("0.0")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Slider(value: $viewModel.aiTemperature, in: 0.0...2.0, step: 0.1)
+                                    .onChange(of: viewModel.aiTemperature) { newValue in
+                                        viewModel.updateAITemperature(newValue)
+                                    }
+                                Text("2.0")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Контролирует креативность ответов")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Макс. токенов: \(viewModel.aiMaxTokens)")
+                                .font(.caption)
+                            
+                            HStack {
+                                Text("50")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Slider(value: Binding(
+                                    get: { Double(viewModel.aiMaxTokens) },
+                                    set: { viewModel.updateAIMaxTokens(Int($0)) }
+                                ), in: 50...4000, step: 50)
+                                Text("4000")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Text("Максимальная длина ответа")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            
+                            if viewModel.aiTemperature > 1.2 {
+                                Text("⚠️ Высокая температура может вызвать AI галлюцинации")
+                                    .font(.caption2)
+                                    .foregroundColor(.orange)
+                                    .padding(.top, 4)
+                            }
+                        }
+                        
+                        Divider()
+                        
+                        Text("💡 Подсказки:")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Text("• 0.0-0.3: Консистентные ответы")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("• 0.7-1.0: Сбалансированные (по умолчанию)")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("• 1.0-1.2: Креативные ответы")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        Text("• 1.2-2.0: Риск галлюцинаций ⚠️")
+                            .font(.caption2)
+                            .foregroundColor(.orange)
+                    }
+                    .padding()
+                    .background(Color(.systemGray))
+                    .cornerRadius(8)
+                    .padding(.horizontal)
+                }
             }
             .frame(minWidth: 400)
             

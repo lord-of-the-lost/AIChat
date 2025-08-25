@@ -39,6 +39,16 @@ final class ChatService {
         return await aiAgent.sendMessage(messages: messages)
     }
     
+    // Метод для обновления AI параметров
+    func updateAIParameters(temperature: Double, maxTokens: Int) {
+        aiAgent.updateParameters(temperature: temperature, maxTokens: maxTokens)
+    }
+    
+    // Метод для получения текущих AI параметров
+    func getCurrentAIParameters() -> (temperature: Double, maxTokens: Int) {
+        return aiAgent.getCurrentAIParameters()
+    }
+    
     private func extractGitHubPRURL(from text: String) -> String? {
         // Ищем GitHub PR URL в тексте
         let pattern = "https://github\\.com/[^/]+/[^/]+/pull/\\d+"
@@ -135,6 +145,10 @@ final class UniversalAIAgent: AIService {
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
     private let mcpService: MCPGitHubService?
     
+    // AI параметры
+    private var temperature: Double = 0.7
+    private var maxTokens: Int = 4000
+    
     init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
         
@@ -145,12 +159,22 @@ final class UniversalAIAgent: AIService {
         }
     }
     
+    func updateParameters(temperature: Double, maxTokens: Int) {
+        self.temperature = temperature
+        self.maxTokens = maxTokens
+    }
+    
+    func getCurrentAIParameters() -> (temperature: Double, maxTokens: Int) {
+        return (temperature: self.temperature, maxTokens: self.maxTokens)
+    }
+    
     func sendMessage(messages: [ChatMessage]) async -> String? {
         guard let url = URL(string: baseURL + "chat/completions") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 60 // 60 секунд таймаут
         
         // Определяем доступные MCP инструменты
         var tools: [[String: Any]] = []
@@ -232,77 +256,59 @@ final class UniversalAIAgent: AIService {
         }
         
         let systemPrompt = """
-        ROLE: Universal AI Assistant with GitHub MCP Integration and Swift Code Execution
-        PURPOSE: Be a helpful conversational AI that can work with GitHub via MCP tools and execute Swift code.
-
-        LANGUAGE RULES:
-        - All communication MUST be in Russian.
-        - Be friendly, helpful, and conversational.
-        - Provide informative and engaging responses on any topic.
-
-        SWIFT CODE EXECUTION:
-        - When user provides Swift code or asks to write/test Swift code, automatically detect and execute it.
-        - Look for Swift keywords: func, let, var, import, print, class, struct, enum, etc.
-        - Code execution happens automatically in the background.
-        - Always explain what the code does before or after execution.
-        - If code has errors, explain them clearly and suggest fixes.
+        Ты помощник. Отвечай на русском языке.
         
-        SWIFT CODE DETECTION:
-        - Code blocks with ```swift or ```
-        - Messages containing Swift keywords
-        - Requests like "напиши код", "создай функцию", "проверь этот код"
+        ВАЖНО: Твоя температура (temperature) = \(String(format: "%.1f", temperature))
         
-        GITHUB MCP INTEGRATION:
-        - When user mentions GitHub-related topics (repositories, issues, projects), suggest using MCP tools.
-        - Use the format: "<MCP_SUGGESTION>Хотите использовать MCP для работы с GitHub? Я могу [действие].</MCP_SUGGESTION>"
-        
-        AVAILABLE MCP TOOLS (if GitHub token is configured):
-        - get_user_repositories: Получить список ваших репозиториев
-        - get_issues: Получить Issues из конкретного репозитория
-        - create_repository: Создать новый репозиторий
-        
-        ANALYSIS AFTER MCP:
-        - После получения данных через MCP ВСЕГДА анализируй результаты
-        - Для репозиториев: анализируй активность, типы проектов, рекомендации
-        - Для Issues: анализируй приоритеты, сложность, создай план работы
-        
-        CONVERSATION STYLE:
-        - Be natural and conversational
-        - Answer questions on any topic (technology, science, culture, etc.)
-        - When discussing technical topics, be clear and accessible
-        - Automatically execute Swift code when detected
-        - Explain code execution results
-        - Help with debugging and code improvement
-        
-        EXAMPLES:
-        - User: "Какие у меня репозитории?" → предложи get_user_repositories
-        - User: "Покажи Issues в моем проекте" → предложи get_issues
-        - User: "Напиши код который складывает два числа" → создай код и выполни его
-        - User: "print(5 + 3)" → выполни код автоматически
-        - User: "Как работает React?" → обычный ответ без MCP и кода
-        
-        RULES:
-        - Be helpful and informative on any topic
-        - Automatically detect and execute Swift code
-        - Suggest MCP only when GitHub operations are mentioned
-        - After using MCP tools, provide detailed analysis
-        - Explain code execution results clearly
-        - Help with code debugging and improvement
+        При низкой температуре (0.0-0.3): будь максимально кратким и фактологическим
+        При средней температуре (0.4-0.7): будь сбалансированным и дружелюбным  
+        При высокой температуре (0.8-1.2): будь креативным и эмоциональным
+        При очень высокой температуре (1.3+): будь максимально креативным и необычным
         """
+        
+        // Для тестирования temperature отправляем только последнее сообщение пользователя
+        // чтобы контекст не влиял на ответ
+        let lastUserMessage = messages.last { $0.isUser }
+        let messagesToSend = lastUserMessage != nil ? [lastUserMessage!] : messages.suffix(1)
+        
+        print("📊 Отправляем \(messagesToSend.count) сообщений для тестирования temperature")
         
         let allMessages: [[String: String]] =
         [["role": "system", "content": systemPrompt]] +
-        messages.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
+        messagesToSend.map { ["role": $0.isUser ? "user" : "assistant", "content": $0.content] }
         
         var payload: [String: Any] = [
-            "model": "gpt-3.5-turbo",
-            "messages": allMessages
+            "model": "gpt-4o-mini",
+            "messages": allMessages,
+            "temperature": temperature,
+            "max_tokens": maxTokens,
+            "top_p": 1.0,
+            "frequency_penalty": 0.0,
+            "presence_penalty": 0.0
         ]
+        
+        print("📤 Отправляем запрос к AI с параметрами: Temperature = \(temperature), MaxTokens = \(maxTokens)")
+        
+        // Добавляем уникальный идентификатор для избежания кэширования
+        payload["user"] = "user_\(UUID().uuidString)"
         
         // Добавляем инструменты только если есть GitHub токен
         if !tools.isEmpty {
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
+        }
+        
+        // Детальное логирование payload
+        print("🔍 Детали payload:")
+        print("   - Model: \(payload["model"] ?? "НЕ УКАЗАН")")
+        print("   - Temperature: \(payload["temperature"] ?? "НЕ УКАЗАН")")
+        print("   - MaxTokens: \(payload["max_tokens"] ?? "НЕ УКАЗАН")")
+        print("   - Messages count: \((payload["messages"] as? [[String: Any]])?.count ?? 0)")
+        
+        if let jsonData = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            print("📋 Полный payload JSON:")
+            print(jsonString)
         }
         
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
@@ -311,12 +317,44 @@ final class UniversalAIAgent: AIService {
     
     private func performRequest(request: URLRequest) async -> String? {
         do {
+            print("🌐 Отправляем HTTP запрос к AI API...")
             let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
             
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any] {
+            guard let http = response as? HTTPURLResponse else {
+                print("❌ Неверный тип ответа от сервера")
+                return nil
+            }
+            
+            print("📡 HTTP статус: \(http.statusCode)")
+            
+            guard http.statusCode == 200 else {
+                print("❌ HTTP ошибка: \(http.statusCode)")
+                if let errorData = String(data: data, encoding: .utf8) {
+                    print("📄 Ответ сервера: \(errorData)")
+                }
+                return nil
+            }
+            
+            print("📄 Получен ответ от AI API (\(data.count) байт)")
+            
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("❌ Не удалось распарсить JSON ответ")
+                return nil
+            }
+            
+            print("🔍 JSON ключи: \(json.keys.joined(separator: ", "))")
+            
+            guard let choices = json["choices"] as? [[String: Any]] else {
+                print("❌ Нет ключа 'choices' в ответе")
+                return nil
+            }
+            
+            print("📋 Количество choices: \(choices.count)")
+            
+            guard let message = choices.first?["message"] as? [String: Any] else {
+                print("❌ Нет ключа 'message' в первом choice")
+                return nil
+            }
                 
                 // Проверяем, есть ли tool_calls (MCP инструменты)
                 if let toolCalls = message["tool_calls"] as? [[String: Any]] {
@@ -354,12 +392,31 @@ final class UniversalAIAgent: AIService {
                     
                     return results.joined(separator: "\n\n")
                 } else if let content = message["content"] as? String {
-                    return content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    print("📝 Получен контент от AI (\(content.count) символов)")
+                    let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+                    
+                    print("✂️ Обрезанный контент (\(trimmedContent.count) символов)")
+                    
+                    // Проверяем на AI галлюцинации
+                    if isAIGeneratedGarbage(trimmedContent) {
+                        print("⚠️ Обнаружены AI галлюцинации")
+                        return "❌ AI вернул некорректный ответ. Попробуйте уменьшить температуру (0.0-1.0) или повторить запрос."
+                    }
+                    
+                    // Проверяем только на галлюцинации, не обрезаем контент
+                    print("📊 Размер ответа: \(trimmedContent.count) символов (лимит: \(maxTokens * 4))")
+                    
+                    print("✅ Контент прошел валидацию")
+                    return trimmedContent
+                } else {
+                    print("❌ Нет контента в сообщении")
+                    print("🔍 Ключи сообщения: \(message.keys.joined(separator: ", "))")
                 }
-            }
         } catch {
-            // Ошибка обработки
+            print("❌ Ошибка при обработке запроса: \(error)")
+            print("🔍 Тип ошибки: \(type(of: error))")
         }
+        print("❌ Не удалось получить ответ от AI")
         return nil
     }
     
@@ -385,7 +442,9 @@ final class UniversalAIAgent: AIService {
         
         let payload: [String: Any] = [
             "model": "gpt-3.5-turbo",
-            "messages": [["role": "user", "content": analysisPrompt]]
+            "messages": [["role": "user", "content": analysisPrompt]],
+            "temperature": temperature,
+            "max_tokens": maxTokens
         ]
         
         request.httpBody = try? JSONSerialization.data(withJSONObject: payload)
@@ -444,5 +503,50 @@ final class UniversalAIAgent: AIService {
         } catch {
             // Ошибка отправки статистики
         }
+    }
+    
+    private func isAIGeneratedGarbage(_ text: String) -> Bool {
+        // Проверяем на наличие бессмысленных символов
+        let garbagePatterns = [
+            "\\b[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\.[A-Za-z0-9_]+\\b", // Много точек
+            "\\b[A-Za-z0-9_]+_[A-Za-z0-9_]+_[A-Za-z0-9_]+\\b", // Много подчеркиваний
+            "[\\u4e00-\\u9fff]", // Китайские символы
+            "[\\u3040-\\u309f]", // Хирагана
+            "[\\u30a0-\\u30ff]", // Катакана
+            "[\\uac00-\\ud7af]", // Корейские символы
+        ]
+        
+        for pattern in garbagePatterns {
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil {
+                print("🚨 Обнаружен паттерн галлюцинаций: \(pattern)")
+                return true
+            }
+        }
+        
+        // Проверяем на повторяющиеся символы
+        let repeatedChars = ["@@@@", "####", "$$$$", "%%%%", "^^^^", "&&&&", "****"]
+        for chars in repeatedChars {
+            if text.contains(chars) {
+                print("🚨 Обнаружены повторяющиеся символы: \(chars)")
+                return true
+            }
+        }
+        
+        // Проверяем на слишком много специальных символов
+        let specialCharCount = text.filter { "!@#$%^&*()_+-=[]{}|;':\",./<>?~`".contains($0) }.count
+        let totalCharCount = text.count
+        if totalCharCount > 0 && Double(specialCharCount) / Double(totalCharCount) > 0.3 {
+            print("🚨 Слишком много специальных символов: \(specialCharCount)/\(totalCharCount)")
+            return true
+        }
+        
+        // Проверяем на слишком длинные ответы при высокой температуре
+        if text.count > 10000 {
+            print("🚨 Слишком длинный ответ: \(text.count) символов")
+            return true
+        }
+        
+        return false
     }
 }
