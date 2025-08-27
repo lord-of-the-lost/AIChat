@@ -161,20 +161,119 @@ class LocalFileService {
     private func validateAndFixYAML(_ content: String) -> String {
         var fixedContent = content
         
-        // Исправляем неправильные триггеры веток - поддерживаем все ветки
+        // Убираем все лишние секции, которые не относятся к GitHub Actions
+        let lines = fixedContent.components(separatedBy: .newlines)
+        var yamlLines: [String] = []
+        var inGitHubActionsSection = false
+        var bracketCount = 0
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            // Начинаем сборку YAML когда находим правильную структуру GitHub Actions
+            if trimmedLine.hasPrefix("name:") && (trimmedLine.contains("CI") || trimmedLine.contains("ci")) {
+                inGitHubActionsSection = true
+            }
+            
+            if inGitHubActionsSection {
+                // Подсчитываем скобки для определения конца YAML
+                bracketCount += trimmedLine.filter { $0 == "{" }.count
+                bracketCount -= trimmedLine.filter { $0 == "}" }.count
+                
+                yamlLines.append(line)
+                
+                // Если нашли конец YAML (когда скобки сбалансированы и встретили пустую строку)
+                if bracketCount == 0 && trimmedLine.isEmpty && yamlLines.count > 10 {
+                    break
+                }
+            }
+        }
+        
+        // Если не нашли правильную структуру, создаем базовый шаблон
+        if yamlLines.isEmpty || yamlLines.count < 5 {
+            return createBasicGitHubActionsYAML()
+        }
+        
+        fixedContent = yamlLines.joined(separator: "\n")
+        
+        // Исправляем неправильные триггеры веток
         fixedContent = fixedContent.replacingOccurrences(of: "branches:\\s*\\[\\s*'\\*'\\s*\\]", with: "branches: [ main, develop, day-* ]", options: .regularExpression)
         
-        // Убираем лишние пробелы в конце строк
-        let lines = fixedContent.components(separatedBy: .newlines)
-        let cleanedLines = lines.map { line in
-            line.trimmingCharacters(in: .whitespaces)
-        }
-        fixedContent = cleanedLines.joined(separator: "\n")
+        // Исправляем неправильные отступы
+        fixedContent = fixYAMLIndentation(fixedContent)
         
         // Убираем пустые строки в конце
         fixedContent = fixedContent.trimmingCharacters(in: .whitespacesAndNewlines)
         
         return fixedContent
+    }
+    
+    private func createBasicGitHubActionsYAML() -> String {
+        return """
+        name: CI
+        
+        on:
+          push:
+            branches: [ main, develop, day-* ]
+          pull_request:
+            branches: [ main, develop, day-* ]
+        
+        jobs:
+          build:
+            runs-on: macos-latest
+            
+            steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+              
+            - name: Set up Xcode
+              uses: actions/setup-xcode@v2
+              with:
+                xcode-version: '15.0'
+                
+            - name: Build project
+              run: xcodebuild build -scheme AIChatMac -configuration Debug
+              
+            - name: Test project
+              run: xcodebuild test -scheme AIChatMac -configuration Debug
+        """
+    }
+    
+    private func fixYAMLIndentation(_ content: String) -> String {
+        let lines = content.components(separatedBy: .newlines)
+        var fixedLines: [String] = []
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            if !trimmedLine.isEmpty {
+                // Определяем правильный отступ на основе контекста
+                if trimmedLine.hasPrefix("name:") || trimmedLine.hasPrefix("on:") || trimmedLine.hasPrefix("jobs:") {
+                    fixedLines.append(trimmedLine)
+                } else if trimmedLine.hasPrefix("push:") || trimmedLine.hasPrefix("pull_request:") {
+                    fixedLines.append("  " + trimmedLine)
+                } else if trimmedLine.hasPrefix("branches:") {
+                    fixedLines.append("    " + trimmedLine)
+                } else if trimmedLine.hasPrefix("build:") {
+                    fixedLines.append("  " + trimmedLine)
+                } else if trimmedLine.hasPrefix("runs-on:") {
+                    fixedLines.append("    " + trimmedLine)
+                } else if trimmedLine.hasPrefix("steps:") {
+                    fixedLines.append("    " + trimmedLine)
+                } else if trimmedLine.hasPrefix("- name:") {
+                    fixedLines.append("    " + trimmedLine)
+                } else if trimmedLine.hasPrefix("uses:") || trimmedLine.hasPrefix("run:") || trimmedLine.hasPrefix("with:") {
+                    fixedLines.append("      " + trimmedLine)
+                } else if trimmedLine.hasPrefix("xcode-version:") {
+                    fixedLines.append("        " + trimmedLine)
+                } else {
+                    fixedLines.append(trimmedLine)
+                }
+            } else {
+                fixedLines.append("")
+            }
+        }
+        
+        return fixedLines.joined(separator: "\n")
     }
     
     private func createAIPrompt(issueAnalysis: String, issueDescription: String, directoryPath: String, projectAnalysis: String) -> String {
@@ -199,6 +298,7 @@ class LocalFileService {
         - НЕ добавляй никакой текст после содержимого файла
         
         **Для GitHub Actions (ci.yml):**
+        - Создай ТОЛЬКО правильный YAML файл для GitHub Actions
         - Используй macos-latest для runs-on
         - Настрой триггеры для ВСЕХ веток: branches: [ main, develop, day-* ]
         - Поддерживай ветки по дням (day-1, day-2, day-17, и т.д.)
@@ -209,6 +309,8 @@ class LocalFileService {
         - Создай рабочий YAML файл с правильным синтаксисом
         - НЕ добавляй комментарии в конец файла
         - Используй актуальные версии actions (actions/checkout@v4, actions/setup-xcode@v2)
+        - НЕ добавляй дополнительные секции (security, performance, testing)
+        - Создай ТОЛЬКО GitHub Actions workflow
         
         **Для Security файла:**
         - Создай политику безопасности для конкретного типа проекта
