@@ -1,0 +1,43 @@
+name: CI.yml
+
+on:
+push:
+branches:
+- main
+- develop
+- day-*
+
+jobs:
+build:
+runs-on: macos-latest
+
+steps:
+- name: Checkout code
+uses: actions/checkout@v4
+
+- name: Set up Xcode
+uses: actions/setup-xcode@v2
+with:
+xcode-select: 12.x
+
+- name: Build and test
+run: |
+xcodebuild build test -scheme AIChat -destination 'platform=iOS Simulator,name=iPhone 11'
+
+security:
+policy:
+- contacts: security@example.com
+- project: AIChat
+- platform: iOS
+
+performance:
+optimization_guide:
+- project_type: Xcode project
+- best_practices: included
+
+testing:
+testing_guide:
+- project_type: Xcode project
+- test_examples: included
+
+Конец файла.
