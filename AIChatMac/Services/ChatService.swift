@@ -16,6 +16,9 @@ final class ChatService {
     private let apiKey: String
     private let githubToken: String
     private let baseURL = "https://api.proxyapi.ru/openai/v1/"
+    private lazy var localFileService: LocalFileService = {
+        return LocalFileService(aiService: self)
+    }()
     
     init(apiKey: String, githubToken: String? = nil) {
         self.apiKey = apiKey
@@ -29,6 +32,13 @@ final class ChatService {
            lastMessage.isUser,
            let prURL = extractGitHubPRURL(from: lastMessage.content) {
             return await handleGitHubPRReview(prURL: prURL, messages: messages)
+        }
+        
+        // Проверяем, есть ли локальная директория в последнем сообщении
+        if let lastMessage = messages.last,
+           lastMessage.isUser,
+           let localPath = extractLocalDirectoryPath(from: lastMessage.content) {
+            return await handleLocalDirectoryFix(path: localPath, messages: messages)
         }
         
         return await aiAgent.sendMessage(messages: messages)
@@ -52,62 +62,175 @@ final class ChatService {
         return nil
     }
     
-    private func handleGitHubPRReview(prURL: String, messages: [ChatMessage]) async -> String? {
-        // Создаем сервисы для ревью
-        let githubPRService = GitHubPRService(githubToken: githubToken)
-        let codeReviewService = CodeReviewService(aiService: self, githubPRService: githubPRService)
+    private func extractLocalDirectoryPath(from text: String) -> String? {
+        // Ищем локальный путь к директории в тексте
+        let pattern = "/[^\\s]+"
+        let regex = try? NSRegularExpression(pattern: pattern)
         
-        // Выполняем ревью
-        let result = await codeReviewService.reviewPullRequest(from: prURL)
-        
-        switch result {
-        case .success(let reviewResult):
-            return createReviewResponse(reviewResult: reviewResult)
-        case .failure(let error):
-            return "❌ Ошибка при ревью PR: \(error.localizedDescription)"
-        }
-    }
-    
-    private func createReviewResponse(reviewResult: CodeReviewResult) -> String { // 'CodeReviewResult' is ambiguous for type lookup in this context
-        var response = """
-        ## 🔍 Ревью Pull Request завершено!
-        
-        ### 📋 Информация о PR:
-        - **Название:** \(reviewResult.pullRequest.title)
-        - **Автор:** \(reviewResult.pullRequest.user.login)
-        - **Номер:** #\(reviewResult.pullRequest.number)
-        - **Ветка:** \(reviewResult.pullRequest.head.ref) → \(reviewResult.pullRequest.base.ref)
-        - **Изменения:** +\(reviewResult.pullRequest.additions) -\(reviewResult.pullRequest.deletions) в \(reviewResult.pullRequest.changedFiles) файлах
-        
-        ### 📊 Результаты ревью:
-        - **Общая оценка:** \(reviewResult.review.overallScore)/100
-        - **Критических проблем:** \(reviewResult.review.issues.filter { $0.severity == .critical }.count)
-        - **Высокого приоритета:** \(reviewResult.review.issues.filter { $0.severity == .high }.count)
-        - **Среднего приоритета:** \(reviewResult.review.issues.filter { $0.severity == .medium }.count)
-        - **Низкого приоритета:** \(reviewResult.review.issues.filter { $0.severity == .low }.count)
-        - **Предложений:** \(reviewResult.review.suggestions.count)
-        
-        ### 🚨 Созданные Issues:
-        """
-        
-        if reviewResult.createdIssues.isEmpty {
-            response += "\n- Проблем не обнаружено, issues не созданы"
-        } else {
-            for issue in reviewResult.createdIssues {
-                response += "\n- [Issue #\(issue.number)](\(issue.htmlUrl)): \(issue.title)"
+        if let match = regex?.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) {
+            let pathRange = Range(match.range, in: text)!
+            let path = String(text[pathRange])
+            
+            // Проверяем, что это похоже на путь к директории
+            if path.hasPrefix("/") && !path.contains("http") && !path.contains("github.com") {
+                return path
             }
         }
         
+        return nil
+    }
+    
+    private func handleGitHubPRReview(prURL: String, messages: [ChatMessage]) async -> String? {
+        // Извлекаем описание проблемы из последнего сообщения
+        guard let lastMessage = messages.last else {
+            return "❌ Не удалось получить описание проблемы"
+        }
+        
+        // Убираем URL из описания проблемы
+        let issueDescription = lastMessage.content.replacingOccurrences(of: prURL, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if issueDescription.isEmpty {
+            return "❌ Пожалуйста, укажите описание проблемы после URL PR"
+        }
+        
+        print("🔧 AI агент получает задачу:")
+        print("📋 PR URL: \(prURL)")
+        print("📋 Описание проблемы: \(issueDescription)")
+        
+        // Создаем сервисы для исправления проблемы
+        let githubPRService = GitHubPRService(githubToken: githubToken)
+        let codeReviewService = CodeReviewService(aiService: self, githubPRService: githubPRService)
+        
+        // Выполняем исправление проблемы
+        let result = await codeReviewService.fixSpecificIssue(from: prURL, issueDescription: issueDescription)
+        
+        switch result {
+        case .success(let fixResult):
+            return createFixResponse(fixResult: fixResult)
+        case .failure(let error):
+            return "❌ Ошибка при исправлении проблемы: \(error.localizedDescription)"
+        }
+    }
+    
+    private func handleLocalDirectoryFix(path: String, messages: [ChatMessage]) async -> String? {
+        // Извлекаем описание проблемы из последнего сообщения
+        guard let lastMessage = messages.last else {
+            return "❌ Не удалось получить описание проблемы"
+        }
+        
+        // Убираем путь из описания проблемы
+        let issueDescription = lastMessage.content.replacingOccurrences(of: path, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        if issueDescription.isEmpty {
+            return "❌ Пожалуйста, укажите описание проблемы после пути к директории"
+        }
+        
+        print("🔧 AI агент получает локальную задачу:")
+        print("📁 Путь: \(path)")
+        print("📋 Описание проблемы: \(issueDescription)")
+        
+        // Выполняем исправление локальной проблемы
+        let result = await localFileService.fixLocalIssue(directoryPath: path, issueDescription: issueDescription)
+        
+        return createLocalFixResponse(result: result)
+    }
+    
+    private func createLocalFixResponse(result: LocalFixResult) -> String {
+        var response = """
+        🔧 AI агент завершил локальное исправление!
+        
+        📋 Статус: \(result.status == .success ? "✅ Успешно" : result.status == .partialSuccess ? "⚠️ Частично успешно" : result.status == .failed ? "❌ Ошибка" : "❓ Требует дополнительной информации")
+        
+        """
+        
+        if !result.createdFiles.isEmpty {
+            response += """
+            📁 Созданные файлы:
+            """
+            for file in result.createdFiles {
+                response += "\n✅ \(file)"
+            }
+            response += "\n\n"
+        }
+        
+        if !result.errors.isEmpty {
+            response += """
+            ❌ Ошибки:
+            """
+            for error in result.errors {
+                response += "\n⚠️ \(error)"
+            }
+            response += "\n\n"
+        }
+        
+        response += result.message
+        
+        return response
+    }
+    
+    private func createFixResponse(fixResult: InteractiveFixResult) -> String {
+        var response = """
+        🔧 AI агент завершил исправление проблемы!
+        
+        📋 Информация о задаче:
+        - PR: \(fixResult.pullRequest.title)
+        - Номер: #\(fixResult.pullRequest.number)
+        - Статус: \(fixResult.status == .completed ? "✅ Завершено" : fixResult.status == .failed ? "❌ Ошибка" : "❓ Требует дополнительной информации")
+        
+        """
+        
+        if let issueAnalysis = fixResult.issueAnalysis {
+            response += """
+            🔍 Анализ проблемы:
+            - Тип: \(issueAnalysis.issueType)
+            - Описание: \(issueAnalysis.issueMessage ?? "Не указано")
+            - Предложение: \(issueAnalysis.suggestion ?? "Не указано")
+            
+            """
+        }
+        
+        if let generatedFix = fixResult.generatedFix {
+            response += """
+            🛠️ Созданное исправление:
+            - Файл: \(generatedFix.filePath)
+            - Описание: \(generatedFix.description)
+            - Коммит: \(generatedFix.commitMessage)
+            
+            """
+            
+            if !generatedFix.diff.isEmpty {
+                response += """
+                📝 Изменения:
+                \(generatedFix.diff)
+                
+                """
+            }
+        }
+        
+        if let fixPR = fixResult.fixPR {
+            response += """
+            🚀 Создан Pull Request с исправлением:
+            - Название: \(fixPR.title)
+            - Номер: #\(fixPR.number)
+            - URL: \(fixPR.htmlUrl)
+            - Ветка: \(fixPR.head.ref) → \(fixPR.base.ref)
+            
+            """
+        }
+        
+        if !fixResult.questions.isEmpty {
+            response += """
+            ❓ Требуется дополнительная информация:
+            """
+            for (index, question) in fixResult.questions.enumerated() {
+                response += "\n\(index + 1). \(question)"
+            }
+            response += "\n\n"
+        }
+        
         response += """
-        
-        ### 💬 Комментарий к PR:
-        - \(reviewResult.commentAdded ? "✅ Добавлен" : "❌ Не добавлен")
-        
-        ### 📝 Краткое резюме:
-        \(reviewResult.review.summary)
-        
         ---
-        *Ревью выполнено автоматически с помощью AI*
+        Исправление выполнено автоматически с помощью AI агента
         """
         
         return response

@@ -10,10 +10,12 @@ import Foundation
 final class CodeReviewService {
     private let aiService: ChatService
     private let githubPRService: GitHubPRService
+    private let mcpGitHubService: MCPGitHubService
     
     init(aiService: ChatService, githubPRService: GitHubPRService) {
         self.aiService = aiService
         self.githubPRService = githubPRService
+        self.mcpGitHubService = MCPGitHubService(githubToken: githubPRService.githubToken)
     }
     
     // MARK: - Timeout Helper
@@ -716,6 +718,1181 @@ final class CodeReviewService {
         case .naming:
             return .low
         }
+    }
+    
+    // MARK: - Interactive Issue Fixing
+    
+    func fixSpecificIssue(
+        from url: String,
+        issueDescription: String,
+        progressCallback: ((Double) -> Void)? = nil
+    ) async -> Result<InteractiveFixResult, Error> {
+        
+        print("🔧 Начинаем исправление конкретной проблемы")
+        print("📋 Описание проблемы: \(issueDescription)")
+        
+        // 1. Парсим URL PR
+        guard let (owner, repo, prNumber) = githubPRService.parseGitHubPRURL(url) else {
+            return .failure(CodeReviewError.invalidURL)
+        }
+        
+        print("✅ URL распарсен: \(owner)/\(repo) PR #\(prNumber)")
+        
+        // 2. Получаем данные PR
+        let prResult = await githubPRService.fetchPullRequest(owner: owner, repo: repo, prNumber: prNumber)
+        guard case .success(let pullRequest) = prResult else {
+            return .failure(CodeReviewError.failedToFetchPR)
+        }
+        
+        print("✅ Данные PR получены: \(pullRequest.title)")
+        
+        // 3. Получаем файлы PR
+        let filesResult = await githubPRService.fetchPullRequestFiles(owner: owner, repo: repo, prNumber: prNumber)
+        guard case .success(let files) = filesResult else {
+            return .failure(CodeReviewError.failedToFetchFiles)
+        }
+        
+        print("✅ Файлы PR получены: \(files.count) файлов")
+        
+        // 4. Анализируем описание проблемы
+        let issueAnalysis = analyzeIssueDescription(issueDescription, files: files)
+        
+        // 5. Если нужно больше информации, возвращаем запрос
+        if issueAnalysis.needsMoreInfo {
+            return .success(InteractiveFixResult(
+                status: .needsMoreInfo,
+                questions: issueAnalysis.questions,
+                pullRequest: pullRequest,
+                issueAnalysis: issueAnalysis,
+                generatedFix: nil,
+                fixPR: nil
+            ))
+        }
+        
+        // 6. Генерируем фикс
+        progressCallback?(0.3)
+        let fixResult = await generateFixForSpecificIssue(
+            issueAnalysis: issueAnalysis,
+            pullRequest: pullRequest,
+            owner: owner,
+            repo: repo
+        )
+        
+        progressCallback?(0.6)
+        
+        // 7. Создаем PR с фиксом
+        let fixPRResult = await createFixPullRequest(
+            fix: fixResult,
+            owner: owner,
+            repo: repo,
+            baseBranch: pullRequest.base.ref,
+            originalPRNumber: prNumber
+        )
+        
+        progressCallback?(1.0)
+        
+        // Проверяем, был ли успешно создан PR
+        let finalStatus: InteractiveFixStatus
+        if fixPRResult != nil {
+            finalStatus = .completed
+        } else {
+            finalStatus = .failed
+        }
+        
+        return .success(InteractiveFixResult(
+            status: finalStatus,
+            questions: [],
+            pullRequest: pullRequest,
+            issueAnalysis: issueAnalysis,
+            generatedFix: fixResult,
+            fixPR: fixPRResult
+        ))
+    }
+    
+    private func analyzeIssueDescription(_ description: String, files: [PRFile]) -> IssueAnalysis {
+        print("🔍 Анализируем описание проблемы...")
+        
+        let lowerDescription = description.lowercased()
+        
+        // 1. GitHub Actions / CI/CD проблемы
+        if lowerDescription.contains("гитхаб экшенс") || lowerDescription.contains("github actions") || 
+           lowerDescription.contains("ci/cd") || lowerDescription.contains("автоматизация") ||
+           lowerDescription.contains("билдится") || lowerDescription.contains("сборка") ||
+           lowerDescription.contains("workflow") || lowerDescription.contains("пайплайн") {
+            
+            return IssueAnalysis(
+                filePath: nil,
+                lineNumber: nil,
+                issueType: "Infrastructure",
+                issueMessage: description,
+                suggestion: "Создать GitHub Actions для автоматической сборки и тестирования",
+                needsMoreInfo: false,
+                questions: []
+            )
+        }
+        
+        // 2. Проблемы безопасности
+        if lowerDescription.contains("безопасн") || lowerDescription.contains("security") ||
+           lowerDescription.contains("токен") || lowerDescription.contains("token") ||
+           lowerDescription.contains("пароль") || lowerDescription.contains("password") ||
+           lowerDescription.contains("ключ") || lowerDescription.contains("key") ||
+           lowerDescription.contains("хранение") || lowerDescription.contains("storage") {
+            
+            return IssueAnalysis(
+                filePath: nil,
+                lineNumber: nil,
+                issueType: "Security",
+                issueMessage: description,
+                suggestion: "Добавить безопасное хранение токенов и ключей",
+                needsMoreInfo: false,
+                questions: []
+            )
+        }
+        
+        // 3. Проблемы производительности
+        if lowerDescription.contains("производительность") || lowerDescription.contains("performance") ||
+           lowerDescription.contains("медленно") || lowerDescription.contains("slow") ||
+           lowerDescription.contains("оптимизация") || lowerDescription.contains("optimization") {
+            
+            return IssueAnalysis(
+                filePath: nil,
+                lineNumber: nil,
+                issueType: "Performance",
+                issueMessage: description,
+                suggestion: "Оптимизировать производительность кода",
+                needsMoreInfo: false,
+                questions: []
+            )
+        }
+        
+        // 4. Проблемы архитектуры
+        if lowerDescription.contains("архитектура") || lowerDescription.contains("architecture") ||
+           lowerDescription.contains("структура") || lowerDescription.contains("structure") ||
+           lowerDescription.contains("паттерн") || lowerDescription.contains("pattern") {
+            
+            return IssueAnalysis(
+                filePath: nil,
+                lineNumber: nil,
+                issueType: "Architecture",
+                issueMessage: description,
+                suggestion: "Улучшить архитектуру кода",
+                needsMoreInfo: false,
+                questions: []
+            )
+        }
+        
+        // 5. Проблемы стиля кода
+        if lowerDescription.contains("стиль") || lowerDescription.contains("style") ||
+           lowerDescription.contains("форматирование") || lowerDescription.contains("formatting") ||
+           lowerDescription.contains("конвенции") || lowerDescription.contains("conventions") {
+            
+            return IssueAnalysis(
+                filePath: nil,
+                lineNumber: nil,
+                issueType: "Style",
+                issueMessage: description,
+                suggestion: "Улучшить стиль кода и форматирование",
+                needsMoreInfo: false,
+                questions: []
+            )
+        }
+        
+        // Извлекаем информацию из описания для конкретных проблем
+        let lines = description.components(separatedBy: "\n")
+        var filePath: String?
+        var lineNumber: Int?
+        var issueType: String?
+        var issueMessage: String?
+        var suggestion: String?
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            
+            // Ищем файл и строку в формате "Файл:строка" или "в Файл:строка"
+            if let fileMatch = trimmedLine.range(of: #"([^:\s]+\.swift):(\d+)"#, options: .regularExpression) {
+                let match = String(trimmedLine[fileMatch])
+                let components = match.components(separatedBy: ":")
+                if components.count == 2 {
+                    filePath = components[0]
+                    lineNumber = Int(components[1])
+                }
+            }
+            
+            // Ищем тип проблемы
+            if trimmedLine.contains("Безопасность") || trimmedLine.contains("Security") {
+                issueType = "Security"
+            } else if trimmedLine.contains("Производительность") || trimmedLine.contains("Performance") {
+                issueType = "Performance"
+            } else if trimmedLine.contains("Архитектура") || trimmedLine.contains("Architecture") {
+                issueType = "Architecture"
+            } else if trimmedLine.contains("Стиль") || trimmedLine.contains("Style") {
+                issueType = "Style"
+            }
+            
+            // Ищем описание проблемы
+            if trimmedLine.contains("Предложение:") {
+                suggestion = trimmedLine.replacingOccurrences(of: "Предложение:", with: "").trimmingCharacters(in: .whitespaces)
+            } else if !trimmedLine.isEmpty && !trimmedLine.contains(":") && issueMessage == nil {
+                issueMessage = trimmedLine
+            }
+        }
+        
+        // Проверяем, нужна ли дополнительная информация
+        var questions: [String] = []
+        var needsMoreInfo = false
+        
+        if filePath == nil {
+            questions.append("В каком файле находится проблема?")
+            needsMoreInfo = true
+        }
+        
+        if lineNumber == nil {
+            questions.append("На какой строке находится проблема?")
+            needsMoreInfo = true
+        }
+        
+        if issueMessage == nil {
+            questions.append("Опишите проблему более подробно")
+            needsMoreInfo = true
+        }
+        
+        // Проверяем, существует ли файл в PR
+        if let filePath = filePath {
+            let fileExists = files.contains { $0.filename.contains(filePath) }
+            if !fileExists {
+                questions.append("Файл '\(filePath)' не найден в PR. Укажите правильное имя файла")
+                needsMoreInfo = true
+            }
+        }
+        
+        return IssueAnalysis(
+            filePath: filePath,
+            lineNumber: lineNumber,
+            issueType: issueType ?? "Unknown",
+            issueMessage: issueMessage,
+            suggestion: suggestion,
+            needsMoreInfo: needsMoreInfo,
+            questions: questions
+        )
+    }
+    
+    private func generateFixForSpecificIssue(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        
+        print("🔧 Генерируем фикс для проблемы типа: \(issueAnalysis.issueType)...")
+        
+        // Проверяем тип проблемы и генерируем соответствующий фикс
+        switch issueAnalysis.issueType {
+        case "Infrastructure":
+            return await generateInfrastructureFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        case "Security":
+            return await generateSecurityFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        case "Performance":
+            return await generatePerformanceFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        case "Architecture":
+            return await generateArchitectureFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        case "Style":
+            return await generateStyleFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        default:
+            return await generateGenericFix(issueAnalysis: issueAnalysis, pullRequest: pullRequest, owner: owner, repo: repo)
+        }
+        
+        // Получаем содержимое файла для конкретной проблемы
+        guard let filePath = issueAnalysis.filePath else {
+            return GeneratedFix(
+                filePath: "unknown",
+                originalContent: "",
+                fixedContent: "",
+                diff: "",
+                description: "Не удалось определить файл для исправления",
+                commitMessage: "Fix issue",
+                success: false
+            )
+        }
+        
+        let fileContentResult = await githubPRService.fetchFileContent(
+            owner: owner,
+            repo: repo,
+            path: filePath,
+            ref: pullRequest.head.sha
+        )
+        
+        let originalContent = (try? fileContentResult.get()) ?? ""
+        
+        // Создаем промпт для генерации фикса
+        let fixPrompt = """
+        Исправь следующую проблему в коде:
+        
+        **Файл:** \(filePath)
+        **Строка:** \(issueAnalysis.lineNumber ?? 0)
+        **Тип проблемы:** \(issueAnalysis.issueType)
+        **Проблема:** \(issueAnalysis.issueMessage ?? "Не указана")
+        **Предложение:** \(issueAnalysis.suggestion ?? "Нет предложения")
+        
+        **Текущий код файла:**
+        ```swift
+        \(originalContent)
+        ```
+        
+        Сгенерируй исправление в следующем формате:
+        
+        FIXED_CODE:
+        ```swift
+        // исправленный код здесь
+        ```
+        
+        DIFF:
+        ```diff
+        - старая строка
+        + новая строка
+        ```
+        
+        DESCRIPTION:
+        Краткое описание исправления
+        
+        COMMIT_MESSAGE:
+        Краткое сообщение для коммита
+        """
+        
+        // Отправляем запрос к AI
+        let messages = [
+            ChatMessage(author: .user, content: fixPrompt, isUser: true)
+        ]
+        
+        let result = await aiService.sendDirectMessage(messages)
+        
+        guard let response = result else {
+            return GeneratedFix(
+                filePath: issueAnalysis.filePath!,
+                originalContent: originalContent,
+                fixedContent: originalContent,
+                diff: "",
+                description: "Не удалось сгенерировать исправление",
+                commitMessage: "Fix issue",
+                success: false
+            )
+        }
+        
+        // Парсим ответ AI
+        let fixedContent = extractCodeBlock(from: response, marker: "FIXED_CODE") ?? originalContent
+        let diff = extractCodeBlock(from: response, marker: "DIFF") ?? ""
+        let description = extractDescription(from: response) ?? "Исправление проблемы"
+        let commitMessage = extractCommitMessage(from: response) ?? "Fix issue"
+        
+        return GeneratedFix(
+            filePath: filePath,
+            originalContent: originalContent,
+            fixedContent: fixedContent,
+            diff: diff,
+            description: description,
+            commitMessage: commitMessage,
+            success: true
+        )
+    }
+    
+    private func generateInfrastructureFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        
+        print("🔧 Генерируем инфраструктурное исправление (GitHub Actions)...")
+        
+        // Создаем промпт для генерации GitHub Actions
+        let fixPrompt = """
+        Создай GitHub Actions для автоматической сборки и тестирования Swift проекта.
+        
+        **Проблема:** \(issueAnalysis.issueMessage ?? "Отсутствуют GitHub Actions")
+        **Предложение:** \(issueAnalysis.suggestion ?? "Создать CI/CD пайплайн")
+        
+        Создай файл .github/workflows/ci.yml для автоматической сборки Swift проекта на macOS.
+        
+        Сгенерируй файл в следующем формате:
+        
+        FIXED_CODE:
+        ```yaml
+        # GitHub Actions для Swift проекта
+        name: CI
+        
+        on:
+          push:
+            branches: [ main, develop ]
+          pull_request:
+            branches: [ main ]
+        
+        jobs:
+          build:
+            runs-on: macos-latest
+            
+            steps:
+            - uses: actions/checkout@v4
+            
+            - name: Select Xcode
+              run: sudo xcode-select -switch /Applications/Xcode_15.2.app
+            
+            - name: Build
+              run: |
+                xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug build
+                
+            - name: Test
+              run: |
+                xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug test
+        ```
+        
+        DIFF:
+        ```diff
+        + name: CI
+        + 
+        + on:
+        +   push:
+        +     branches: [ main, develop ]
+        +   pull_request:
+        +     branches: [ main ]
+        + 
+        + jobs:
+        +   build:
+        +     runs-on: macos-latest
+        +     
+        +     steps:
+        +     - uses: actions/checkout@v4
+        +     
+        +     - name: Select Xcode
+        +       run: sudo xcode-select -switch /Applications/Xcode_15.2.app
+        +     
+        +     - name: Build
+        +       run: |
+        +         xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug build
+        +         
+        +     - name: Test
+        +       run: |
+        +         xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug test
+        ```
+        
+        DESCRIPTION:
+        Создан GitHub Actions для автоматической сборки и тестирования Swift проекта
+        
+        COMMIT_MESSAGE:
+        Add GitHub Actions CI/CD pipeline
+        """
+        
+        // Отправляем запрос к AI
+        let messages = [
+            ChatMessage(author: .user, content: fixPrompt, isUser: true)
+        ]
+        
+        let result = await aiService.sendDirectMessage(messages)
+        
+        guard let response = result else {
+            return GeneratedFix(
+                filePath: ".github/workflows/ci.yml",
+                originalContent: "",
+                fixedContent: "",
+                diff: "",
+                description: "Не удалось сгенерировать GitHub Actions",
+                commitMessage: "Add CI/CD pipeline",
+                success: false
+            )
+        }
+        
+        // Парсим ответ AI
+        let fixedContent = extractCodeBlock(from: response, marker: "FIXED_CODE") ?? getDefaultGitHubActions()
+        let diff = extractCodeBlock(from: response, marker: "DIFF") ?? ""
+        let description = extractDescription(from: response) ?? "Создан GitHub Actions для автоматической сборки"
+        let commitMessage = extractCommitMessage(from: response) ?? "Add GitHub Actions CI/CD pipeline"
+        
+        return GeneratedFix(
+            filePath: ".github/workflows/ci.yml",
+            originalContent: "",
+            fixedContent: fixedContent,
+            diff: diff,
+            description: description,
+            commitMessage: commitMessage,
+            success: true
+        )
+    }
+    
+    private func getDefaultGitHubActions() -> String {
+        return """
+        name: CI
+        
+        on:
+          push:
+            branches: [ main, develop ]
+          pull_request:
+            branches: [ main ]
+        
+        jobs:
+          build:
+            runs-on: macos-latest
+            
+            steps:
+            - uses: actions/checkout@v4
+            
+            - name: Select Xcode
+              run: sudo xcode-select -switch /Applications/Xcode_15.2.app
+            
+            - name: Build
+              run: |
+                xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug build
+                
+            - name: Test
+              run: |
+                xcodebuild -project AIChat.xcodeproj -scheme AIChatMac -configuration Debug test
+        """
+    }
+    
+    // MARK: - Security Fix Generation
+    
+    private func generateSecurityFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        
+        print("🔒 Генерируем исправление для проблемы безопасности...")
+        
+        // Создаем промпт для генерации исправления безопасности
+        let fixPrompt = """
+        Создай безопасное решение для хранения токенов и ключей в Swift приложении.
+        
+        **Проблема:** \(issueAnalysis.issueMessage ?? "Небезопасное хранение токенов")
+        **Предложение:** \(issueAnalysis.suggestion ?? "Добавить безопасное хранение")
+        
+        Создай файл для безопасного хранения токенов с использованием Keychain.
+        
+        Сгенерируй файл в следующем формате:
+        
+        FIXED_CODE:
+        ```swift
+        import Foundation
+        import Security
+        
+        // MARK: - Secure Token Storage
+        class SecureTokenStorage {
+            private let service = "com.aichat.tokens"
+            
+            // Сохранить токен в Keychain
+            func saveToken(_ token: String, forKey key: String) -> Bool {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key,
+                    kSecValueData as String: token.data(using: .utf8)!
+                ]
+                
+                // Удаляем существующий токен
+                SecItemDelete(query as CFDictionary)
+                
+                // Сохраняем новый токен
+                let status = SecItemAdd(query as CFDictionary, nil)
+                return status == errSecSuccess
+            }
+            
+            // Получить токен из Keychain
+            func getToken(forKey key: String) -> String? {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key,
+                    kSecReturnData as String: true,
+                    kSecMatchLimit as String: kSecMatchLimitOne
+                ]
+                
+                var result: AnyObject?
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                
+                guard status == errSecSuccess,
+                      let data = result as? Data,
+                      let token = String(data: data, encoding: .utf8) else {
+                    return nil
+                }
+                
+                return token
+            }
+            
+            // Удалить токен из Keychain
+            func deleteToken(forKey key: String) -> Bool {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key
+                ]
+                
+                let status = SecItemDelete(query as CFDictionary)
+                return status == errSecSuccess
+            }
+            
+            // Проверить существование токена
+            func hasToken(forKey key: String) -> Bool {
+                return getToken(forKey: key) != nil
+            }
+        }
+        
+        // MARK: - Environment Configuration
+        class EnvironmentConfig {
+            private let tokenStorage = SecureTokenStorage()
+            
+            // Безопасное получение API ключа
+            var apiKey: String? {
+                return tokenStorage.getToken(forKey: "api_key")
+            }
+            
+            // Безопасное получение GitHub токена
+            var githubToken: String? {
+                return tokenStorage.getToken(forKey: "github_token")
+            }
+            
+            // Инициализация токенов (вызывать только один раз)
+            func setupTokens(apiKey: String, githubToken: String) {
+                tokenStorage.saveToken(apiKey, forKey: "api_key")
+                tokenStorage.saveToken(githubToken, forKey: "github_token")
+            }
+        }
+        ```
+        
+        DIFF:
+        ```diff
+        + import Foundation
+        + import Security
+        + 
+        + // MARK: - Secure Token Storage
+        + class SecureTokenStorage {
+        +     private let service = "com.aichat.tokens"
+        +     
+        +     // Сохранить токен в Keychain
+        +     func saveToken(_ token: String, forKey key: String) -> Bool {
+        +         let query: [String: Any] = [
+        +             kSecClass as String: kSecClassGenericPassword,
+        +             kSecAttrService as String: service,
+        +             kSecAttrAccount as String: key,
+        +             kSecValueData as String: token.data(using: .utf8)!
+        +         ]
+        +         
+        +         // Удаляем существующий токен
+        +         SecItemDelete(query as CFDictionary)
+        +         
+        +         // Сохраняем новый токен
+        +         let status = SecItemAdd(query as CFDictionary, nil)
+        +         return status == errSecSuccess
+        +     }
+        +     
+        +     // Получить токен из Keychain
+        +     func getToken(forKey key: String) -> String? {
+        +         let query: [String: Any] = [
+        +             kSecClass as String: kSecClassGenericPassword,
+        +             kSecAttrService as String: service,
+        +             kSecAttrAccount as String: key,
+        +             kSecReturnData as String: true,
+        +             kSecMatchLimit as String: kSecMatchLimitOne
+        +         ]
+        +         
+        +         var result: AnyObject?
+        +         let status = SecItemCopyMatching(query as CFDictionary, &result)
+        +         
+        +         guard status == errSecSuccess,
+        +               let data = result as? Data,
+        +               let token = String(data: data, encoding: .utf8) else {
+        +             return nil
+        +         }
+        +         
+        +         return token
+        +     }
+        +     
+        +     // Удалить токен из Keychain
+        +     func deleteToken(forKey key: String) -> Bool {
+        +         let query: [String: Any] = [
+        +             kSecClass as String: kSecClassGenericPassword,
+        +             kSecAttrService as String: service,
+        +             kSecAttrAccount as String: key
+        +         ]
+        +         
+        +         let status = SecItemDelete(query as CFDictionary)
+        +         return status == errSecSuccess
+        +     }
+        +     
+        +     // Проверить существование токена
+        +     func hasToken(forKey key: String) -> Bool {
+        +         return getToken(forKey: key) != nil
+        +     }
+        + }
+        + 
+        + // MARK: - Environment Configuration
+        + class EnvironmentConfig {
+        +     private let tokenStorage = SecureTokenStorage()
+        +     
+        +     // Безопасное получение API ключа
+        +     var apiKey: String? {
+        +         return tokenStorage.getToken(forKey: "api_key")
+        +         }
+        +         
+        +         // Безопасное получение GitHub токена
+        +         var githubToken: String? {
+        +             return tokenStorage.getToken(forKey: "github_token")
+        +         }
+        +         
+        +         // Инициализация токенов (вызывать только один раз)
+        +         func setupTokens(apiKey: String, githubToken: String) {
+        +             tokenStorage.saveToken(apiKey, forKey: "api_key")
+        +             tokenStorage.saveToken(githubToken, forKey: "github_token")
+        +         }
+        + }
+        ```
+        
+        DESCRIPTION:
+        Добавлено безопасное хранение токенов с использованием Keychain
+        
+        COMMIT_MESSAGE:
+        Add secure token storage using Keychain
+        """
+        
+        // Отправляем запрос к AI
+        let messages = [
+            ChatMessage(author: .user, content: fixPrompt, isUser: true)
+        ]
+        
+        let result = await aiService.sendDirectMessage(messages)
+        
+        guard let response = result else {
+            return GeneratedFix(
+                filePath: "AIChatMac/Services/SecureTokenStorage.swift",
+                originalContent: "",
+                fixedContent: "",
+                diff: "",
+                description: "Не удалось сгенерировать исправление безопасности",
+                commitMessage: "Add secure token storage",
+                success: false
+            )
+        }
+        
+        // Парсим ответ AI
+        let fixedContent = extractCodeBlock(from: response, marker: "FIXED_CODE") ?? getDefaultSecurityFix()
+        let diff = extractCodeBlock(from: response, marker: "DIFF") ?? ""
+        let description = extractDescription(from: response) ?? "Добавлено безопасное хранение токенов"
+        let commitMessage = extractCommitMessage(from: response) ?? "Add secure token storage using Keychain"
+        
+        return GeneratedFix(
+            filePath: "AIChatMac/Services/SecureTokenStorage.swift",
+            originalContent: "",
+            fixedContent: fixedContent,
+            diff: diff,
+            description: description,
+            commitMessage: commitMessage,
+            success: true
+        )
+    }
+    
+    // MARK: - Other Fix Generators (Placeholders)
+    
+    private func generatePerformanceFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        return GeneratedFix(
+            filePath: "AIChatMac/Services/PerformanceOptimization.swift",
+            originalContent: "",
+            fixedContent: "// Performance optimization placeholder",
+            diff: "",
+            description: "Performance optimization (placeholder)",
+            commitMessage: "Add performance optimization",
+            success: true
+        )
+    }
+    
+    private func generateArchitectureFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        return GeneratedFix(
+            filePath: "AIChatMac/Services/ArchitectureImprovement.swift",
+            originalContent: "",
+            fixedContent: "// Architecture improvement placeholder",
+            diff: "",
+            description: "Architecture improvement (placeholder)",
+            commitMessage: "Improve code architecture",
+            success: true
+        )
+    }
+    
+    private func generateStyleFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        return GeneratedFix(
+            filePath: "AIChatMac/Services/StyleImprovement.swift",
+            originalContent: "",
+            fixedContent: "// Code style improvement placeholder",
+            diff: "",
+            description: "Code style improvement (placeholder)",
+            commitMessage: "Improve code style",
+            success: true
+        )
+    }
+    
+    private func generateGenericFix(
+        issueAnalysis: IssueAnalysis,
+        pullRequest: PullRequest,
+        owner: String,
+        repo: String
+    ) async -> GeneratedFix {
+        return GeneratedFix(
+            filePath: "AIChatMac/Services/GenericFix.swift",
+            originalContent: "",
+            fixedContent: "// Generic fix placeholder",
+            diff: "",
+            description: "Generic fix (placeholder)",
+            commitMessage: "Add generic fix",
+            success: true
+        )
+    }
+    
+    private func getDefaultSecurityFix() -> String {
+        return """
+        import Foundation
+        import Security
+        
+        // MARK: - Secure Token Storage
+        class SecureTokenStorage {
+            private let service = "com.aichat.tokens"
+            
+            // Сохранить токен в Keychain
+            func saveToken(_ token: String, forKey key: String) -> Bool {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key,
+                    kSecValueData as String: token.data(using: .utf8)!
+                ]
+                
+                // Удаляем существующий токен
+                SecItemDelete(query as CFDictionary)
+                
+                // Сохраняем новый токен
+                let status = SecItemAdd(query as CFDictionary, nil)
+                return status == errSecSuccess
+            }
+            
+            // Получить токен из Keychain
+            func getToken(forKey key: String) -> String? {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key,
+                    kSecReturnData as String: true,
+                    kSecMatchLimit as String: kSecMatchLimitOne
+                ]
+                
+                var result: AnyObject?
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                
+                guard status == errSecSuccess,
+                      let data = result as? Data,
+                      let token = String(data: data, encoding: .utf8) else {
+                    return nil
+                }
+                
+                return token
+            }
+            
+            // Удалить токен из Keychain
+            func deleteToken(forKey key: String) -> Bool {
+                let query: [String: Any] = [
+                    kSecClass as String: kSecClassGenericPassword,
+                    kSecAttrService as String: service,
+                    kSecAttrAccount as String: key
+                ]
+                
+                let status = SecItemDelete(query as CFDictionary)
+                return status == errSecSuccess
+            }
+            
+            // Проверить существование токена
+            func hasToken(forKey key: String) -> Bool {
+                return getToken(forKey: key) != nil
+            }
+        }
+        
+        // MARK: - Environment Configuration
+        class EnvironmentConfig {
+            private let tokenStorage = SecureTokenStorage()
+            
+            // Безопасное получение API ключа
+            var apiKey: String? {
+                return tokenStorage.getToken(forKey: "api_key")
+            }
+            
+            // Безопасное получение GitHub токена
+            var githubToken: String? {
+                return tokenStorage.getToken(forKey: "github_token")
+            }
+            
+            // Инициализация токенов (вызывать только один раз)
+            func setupTokens(apiKey: String, githubToken: String) {
+                tokenStorage.saveToken(apiKey, forKey: "api_key")
+                tokenStorage.saveToken(githubToken, forKey: "github_token")
+            }
+        }
+        """
+    }
+    
+    private func createFixPullRequest(
+        fix: GeneratedFix,
+        owner: String,
+        repo: String,
+        baseBranch: String,
+        originalPRNumber: Int
+    ) async -> PullRequest? {
+        
+        print("🔧 Создаем Pull Request с исправлением...")
+        
+        // Сначала получаем информацию о репозитории
+        let repoInfoResult = await mcpGitHubService.getRepositoryInfo(owner: owner, repo: repo)
+        
+        switch repoInfoResult {
+        case .success(let repoInfo):
+            print("✅ Информация о репозитории получена")
+            print("📋 Default branch: \(repoInfo.defaultBranch)")
+            print("🔒 Приватный: \(repoInfo.isPrivate)")
+            
+            // Используем правильную ветку по умолчанию
+            let actualBaseBranch = baseBranch.isEmpty ? repoInfo.defaultBranch : baseBranch
+            print("📋 Используем ветку: \(actualBaseBranch)")
+            
+        case .failure(let error):
+            print("❌ Не удалось получить информацию о репозитории: \(error)")
+            return nil
+        }
+        
+        // Создаем ветку для фикса используя MCP сервис
+        let branchName = "fix-issue-pr-\(originalPRNumber)"
+        let actualBaseBranch = baseBranch.isEmpty ? "main" : baseBranch
+        let branchResult = await mcpGitHubService.createBranch(
+            owner: owner,
+            repo: repo,
+            branchName: branchName,
+            baseBranch: actualBaseBranch
+        )
+        
+        switch branchResult {
+        case .success:
+            print("✅ Ветка \(branchName) создана успешно")
+        case .failure(let error):
+            print("❌ Не удалось создать ветку \(branchName): \(error)")
+            return nil
+        }
+        
+        // Создаем файл с исправлением используя MCP сервис
+        let fileResult = await mcpGitHubService.createFile(
+            owner: owner,
+            repo: repo,
+            path: fix.filePath,
+            content: fix.fixedContent,
+            message: fix.commitMessage,
+            branch: branchName
+        )
+        
+        switch fileResult {
+        case .success:
+            print("✅ Файл \(fix.filePath) создан успешно")
+        case .failure(let error):
+            print("❌ Не удалось создать файл: \(error)")
+            return nil
+        }
+        
+        // Проверяем, существует ли уже Pull Request
+        let prExistsResult = await githubPRService.checkPullRequestExists(
+            owner: owner,
+            repo: repo,
+            headBranch: branchName,
+            baseBranch: baseBranch
+        )
+        
+        switch prExistsResult {
+        case .success(let exists):
+            if exists {
+                print("⚠️ Pull Request уже существует для ветки \(branchName)")
+                return nil
+            }
+        case .failure(let error):
+            print("⚠️ Не удалось проверить существование PR: \(error)")
+        }
+        
+        // Создаем Pull Request используя MCP сервис
+        let prResult = await mcpGitHubService.createPullRequest(
+            owner: owner,
+            repo: repo,
+            title: "🔧 Исправление проблемы из PR #\(originalPRNumber)",
+            body: """
+            ## Исправление проблемы
+            
+            **Файл:** \(fix.filePath)
+            **Описание:** \(fix.description)
+            
+            ### Изменения:
+            ```
+            \(fix.diff)
+            ```
+            
+            ---
+            *Исправление сгенерировано автоматически*
+            """,
+            headBranch: branchName,
+            baseBranch: actualBaseBranch
+        )
+        
+        switch prResult {
+        case .success(let mcpPR):
+            print("✅ Создан Pull Request с исправлением: \(mcpPR.htmlUrl)")
+            // Конвертируем GitHubPullRequest в PullRequest
+            let dateFormatter = ISO8601DateFormatter()
+            
+            let pr = PullRequest(
+                id: mcpPR.id,
+                number: mcpPR.number,
+                title: mcpPR.title,
+                body: mcpPR.body,
+                state: mcpPR.state,
+                user: GitHubUser(
+                    login: mcpPR.user.login,
+                    id: mcpPR.user.id,
+                    name: mcpPR.user.name,
+                    email: mcpPR.user.email,
+                    avatarUrl: mcpPR.user.avatarUrl,
+                    htmlUrl: mcpPR.user.htmlUrl
+                ),
+                head: PRBranch(
+                    label: mcpPR.head.label,
+                    ref: mcpPR.head.ref,
+                    sha: mcpPR.head.sha,
+                    user: mcpPR.head.user ?? GitHubUser(
+                        login: "",
+                        id: 0,
+                        name: nil,
+                        email: nil,
+                        avatarUrl: "",
+                        htmlUrl: nil
+                    ),
+                    repo: mcpPR.head.repo ?? GitHubRepository(
+                        id: 0,
+                        name: "",
+                        fullName: "",
+                        description: nil,
+                        isPrivate: false,
+                        htmlUrl: "",
+                        autoInit: nil
+                    )
+                ),
+                base: PRBranch(
+                    label: mcpPR.base.label,
+                    ref: mcpPR.base.ref,
+                    sha: mcpPR.base.sha,
+                    user: mcpPR.base.user ?? GitHubUser(
+                        login: "",
+                        id: 0,
+                        name: nil,
+                        email: nil,
+                        avatarUrl: "",
+                        htmlUrl: nil
+                    ),
+                    repo: mcpPR.base.repo ?? GitHubRepository(
+                        id: 0,
+                        name: "",
+                        fullName: "",
+                        description: nil,
+                        isPrivate: false,
+                        htmlUrl: "",
+                        autoInit: nil
+                    )
+                ),
+                additions: 0,
+                deletions: 0,
+                changedFiles: 0,
+                createdAt: dateFormatter.date(from: mcpPR.createdAt) ?? Date(),
+                updatedAt: dateFormatter.date(from: mcpPR.updatedAt) ?? Date(),
+                htmlUrl: mcpPR.htmlUrl,
+                diffUrl: "",
+                patchUrl: "",
+                commitsUrl: "",
+                commentsUrl: "",
+                reviewCommentsUrl: "",
+                statusesUrl: ""
+            )
+            return pr
+        case .failure(let error):
+            print("❌ Ошибка создания Pull Request: \(error)")
+            return nil
+        }
+    }
+    
+    private func extractCodeBlock(from text: String, marker: String) -> String? {
+        let pattern = "\(marker):\\s*```(?:swift)?\\s*([\\s\\S]*?)```"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+        
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else {
+            return nil
+        }
+        
+        let codeRange = match.range(at: 1)
+        guard let range = Range(codeRange, in: text) else {
+            return nil
+        }
+        
+        return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    private func extractDescription(from text: String) -> String? {
+        let pattern = "DESCRIPTION:\\s*(.+)"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+        
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else {
+            return nil
+        }
+        
+        let descRange = match.range(at: 1)
+        guard let range = Range(descRange, in: text) else {
+            return nil
+        }
+        
+        return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    
+    private func extractCommitMessage(from text: String) -> String? {
+        let pattern = "COMMIT_MESSAGE:\\s*(.+)"
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
+            return nil
+        }
+        
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else {
+            return nil
+        }
+        
+        let msgRange = match.range(at: 1)
+        guard let range = Range(msgRange, in: text) else {
+            return nil
+        }
+        
+        return String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

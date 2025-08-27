@@ -184,7 +184,18 @@ final class MacChatViewModel: ObservableObject {
             
             // Проверяем, есть ли GitHub PR URL в сообщении
             if let prURL = extractGitHubPRURL(from: userMessage.content) {
-                await reviewGitHubPR(prURL: prURL)
+                // Проверяем, есть ли описание проблемы в сообщении
+                let issueDescription = userMessage.content.replacingOccurrences(of: prURL, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                if !issueDescription.isEmpty {
+                    // Если есть описание проблемы, работаем как AI агент
+                    await fixSpecificIssue(prURL: prURL, issueDescription: issueDescription)
+                } else {
+                    // Если нет описания проблемы, запрашиваем его
+                    let requestMessage = "🔧 AI агент готов к работе! Пожалуйста, опишите проблему, которую нужно исправить."
+                    let systemMessage = ChatMessage(author: .system, content: requestMessage, isUser: false)
+                    messages.append(systemMessage)
+                }
             } else {
                 // Проверяем, есть ли Swift код в сообщении
                 let containsSwiftCode = detectSwiftCode(in: userMessage.content)
@@ -224,38 +235,108 @@ final class MacChatViewModel: ObservableObject {
         return nil
     }
     
-    private func reviewGitHubPR(prURL: String) async {
-        // Начинаем ревью
+    private func fixSpecificIssue(prURL: String, issueDescription: String) async {
+        // Начинаем исправление проблемы
         startReview()
         
-        // Создаем сервисы для ревью
+        // Создаем сервисы для исправления проблемы
         let githubPRService = GitHubPRService(githubToken: githubToken)
         let codeReviewService = CodeReviewService(aiService: chatService, githubPRService: githubPRService)
         
-        // Выполняем ревью с отслеживанием прогресса
-        let result = await codeReviewService.reviewPullRequest(from: prURL, progressCallback: { progress in
-            Task { @MainActor in
-                self.updateReviewProgress(progress)
+        // Выполняем исправление проблемы с отслеживанием прогресса
+        let result = await codeReviewService.fixSpecificIssue(
+            from: prURL, 
+            issueDescription: issueDescription,
+            progressCallback: { progress in
+                Task { @MainActor in
+                    self.updateReviewProgress(progress)
+                }
             }
-        })
+        )
         
-        // Завершаем ревью
+        // Завершаем исправление
         finishReview()
         
         switch result {
-        case .success(let reviewResult):
-            lastReviewResult = reviewResult
-            
-            // Добавляем результат ревью в чат
-            let reviewMessage = formatReviewResult(reviewResult)
-            let systemMessage = ChatMessage(author: .system, content: reviewMessage, isUser: false)
+        case .success(let fixResult):
+            // Добавляем результат исправления в чат
+            let fixMessage = formatFixResult(fixResult)
+            let systemMessage = ChatMessage(author: .system, content: fixMessage, isUser: false)
             messages.append(systemMessage)
             
         case .failure(let error):
-            let errorMessage = "❌ Ошибка при ревью PR: \(error.localizedDescription)"
+            let errorMessage = "❌ Ошибка при исправлении проблемы: \(error.localizedDescription)"
             let errorChatMessage = ChatMessage(author: .system, content: errorMessage, isUser: false)
             messages.append(errorChatMessage)
         }
+    }
+    
+    private func formatFixResult(_ result: InteractiveFixResult) -> String {
+        var message = """
+        🔧 AI агент завершил исправление проблемы!
+        
+        📋 Информация о задаче:
+        - PR: \(result.pullRequest.title)
+        - Номер: #\(result.pullRequest.number)
+        - Статус: \(result.status == .completed ? "✅ Завершено" : result.status == .failed ? "❌ Ошибка" : "❓ Требует дополнительной информации")
+        
+        """
+        
+        if let issueAnalysis = result.issueAnalysis {
+            message += """
+            🔍 Анализ проблемы:
+            - Тип: \(issueAnalysis.issueType)
+            - Описание: \(issueAnalysis.issueMessage ?? "Не указано")
+            - Предложение: \(issueAnalysis.suggestion ?? "Не указано")
+            
+            """
+        }
+        
+        if let generatedFix = result.generatedFix {
+            message += """
+            🛠️ Созданное исправление:
+            - Файл: \(generatedFix.filePath)
+            - Описание: \(generatedFix.description)
+            - Коммит: \(generatedFix.commitMessage)
+            
+            """
+            
+            if !generatedFix.diff.isEmpty {
+                message += """
+                📝 Изменения:
+                \(generatedFix.diff)
+                
+                """
+            }
+        }
+        
+        if let fixPR = result.fixPR {
+            message += """
+            🚀 Создан Pull Request с исправлением:
+            - Название: \(fixPR.title)
+            - Номер: #\(fixPR.number)
+            - URL: \(fixPR.htmlUrl)
+            - Ветка: \(fixPR.head.ref) → \(fixPR.base.ref)
+            
+            """
+        }
+        
+        if !result.questions.isEmpty {
+            message += """
+            ❓ Требуется дополнительная информация:
+            """
+            for (index, question) in result.questions.enumerated() {
+                message += "\n\(index + 1). \(question)"
+            }
+            message += "\n\n"
+        }
+        
+        message += """
+        ---
+        Исправление выполнено автоматически с помощью AI агента
+        """
+        
+        return message
     }
     
     private func formatReviewResult(_ result: CodeReviewResult) -> String {

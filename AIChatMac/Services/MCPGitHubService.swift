@@ -264,6 +264,236 @@ final class MCPGitHubService {
         }
     }
     
+    // MARK: - Git Operations
+    
+    func getRepositoryInfo(owner: String, repo: String) async -> Result<GitHubRepositoryInfo, Error> {
+        let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)")!
+        
+        var request = URLRequest(url: url)
+        request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        
+        print("🔍 Проверяем доступ к репозиторию: \(owner)/\(repo)")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 HTTP статус: \(httpResponse.statusCode)")
+            }
+            
+            print("📋 Ответ: \(String(data: data, encoding: .utf8) ?? "Unknown")")
+            
+            guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                let errorData = String(data: data, encoding: .utf8) ?? "Unknown error"
+                print("❌ GitHub API ошибка: \(errorData)")
+                return .failure(GitHubMCPError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1))
+            }
+            
+            let repositoryInfo = try JSONDecoder().decode(GitHubRepositoryInfo.self, from: data)
+            print("✅ Репозиторий найден: \(repositoryInfo.name)")
+            print("📋 Default branch: \(repositoryInfo.defaultBranch)")
+            print("🔒 Приватный: \(repositoryInfo.isPrivate)")
+            
+            return .success(repositoryInfo)
+        } catch {
+            print("❌ Ошибка получения информации о репозитории: \(error)")
+            return .failure(error)
+        }
+    }
+    
+    func createBranch(owner: String, repo: String, branchName: String, baseBranch: String = "main") async -> Result<Void, Error> {
+        // Сначала получаем SHA последнего коммита в базовой ветке
+        let commitResult = await getLatestCommit(owner: owner, repo: repo, branch: baseBranch)
+        
+        switch commitResult {
+        case .success(let commit):
+            // Создаем новую ветку
+            guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)/git/refs") else {
+                return .failure(GitHubMCPError.invalidURL)
+            }
+            
+                    var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            
+            let payload: [String: Any] = [
+                "ref": "refs/heads/\(branchName)",
+                "sha": commit.sha
+            ]
+            
+            do {
+                request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+                
+                let (data, response) = try await URLSession.shared.data(for: request)
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    return .failure(GitHubMCPError.invalidResponse)
+                }
+                
+                if httpResponse.statusCode == 201 {
+                    print("✅ Ветка \(branchName) создана успешно")
+                    return .success(())
+                } else if httpResponse.statusCode == 422 {
+                    // Ветка уже существует
+                    print("⚠️ Ветка \(branchName) уже существует, продолжаем...")
+                    return .success(())
+                } else {
+                    if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                       let message = errorData["message"] as? String {
+                        print("❌ GitHub API ошибка: \(message)")
+                        return .failure(GitHubMCPError.apiError(message))
+                    } else {
+                        print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                        return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                    }
+                }
+            } catch {
+                return .failure(error)
+            }
+            
+        case .failure(let error):
+            return .failure(error)
+        }
+    }
+    
+    func createFile(owner: String, repo: String, path: String, content: String, message: String, branch: String = "main") async -> Result<GitHubFileResponse, Error> {
+        guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)/contents/\(path)") else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "message": message,
+            "content": Data(content.utf8).base64EncodedString(),
+            "branch": branch
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            
+            print("🔍 Создаем файл \(path) в репозитории \(owner)/\(repo)")
+            print("URL: \(url)")
+            print("Ветка: \(branch)")
+            print("Сообщение: \(message)")
+            print("Payload: \(payload)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            print("📡 HTTP статус: \(httpResponse.statusCode)")
+            print("📡 Response data: \(String(data: data, encoding: .utf8) ?? "Unknown")")
+            
+            if httpResponse.statusCode == 201 {
+                let fileResponse = try JSONDecoder().decode(GitHubFileResponse.self, from: data)
+                print("✅ Файл \(path) создан успешно")
+                return .success(fileResponse)
+            } else {
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorData["message"] as? String {
+                    print("❌ GitHub API ошибка: \(message)")
+                    return .failure(GitHubMCPError.apiError(message))
+                } else {
+                    print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                    return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                }
+            }
+        } catch {
+            print("❌ Ошибка при создании файла: \(error)")
+            return .failure(error)
+        }
+    }
+    
+    func createPullRequest(owner: String, repo: String, title: String, body: String, headBranch: String, baseBranch: String = "main") async -> Result<GitHubPullRequest, Error> {
+        guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)/pulls") else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("token \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        let payload: [String: Any] = [
+            "title": title,
+            "body": body,
+            "head": headBranch,
+            "base": baseBranch
+        ]
+        
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            
+            print("🔍 Создаем Pull Request в репозитории \(owner)/\(repo)")
+            print("Заголовок: \(title)")
+            print("Ветка: \(headBranch) → \(baseBranch)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            print("📡 HTTP статус: \(httpResponse.statusCode)")
+            
+            if httpResponse.statusCode == 201 {
+                let pullRequest = try JSONDecoder().decode(GitHubPullRequest.self, from: data)
+                print("✅ Pull Request создан успешно: #\(pullRequest.number)")
+                return .success(pullRequest)
+            } else {
+                if let errorData = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let message = errorData["message"] as? String {
+                    print("❌ GitHub API ошибка: \(message)")
+                    return .failure(GitHubMCPError.apiError(message))
+                } else {
+                    print("❌ HTTP ошибка: \(httpResponse.statusCode)")
+                    return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+                }
+            }
+        } catch {
+            print("❌ Ошибка при создании Pull Request: \(error)")
+            return .failure(error)
+        }
+    }
+    
+    private func getLatestCommit(owner: String, repo: String, branch: String) async -> Result<GitHubCommit, Error> {
+        guard let url = URL(string: "\(baseURL)/repos/\(owner)/\(repo)/commits/\(branch)") else {
+            return .failure(GitHubMCPError.invalidURL)
+        }
+        
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(githubToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(GitHubMCPError.invalidResponse)
+            }
+            
+            if httpResponse.statusCode == 200 {
+                let commit = try JSONDecoder().decode(GitHubCommit.self, from: data)
+                return .success(commit)
+            } else {
+                return .failure(GitHubMCPError.httpError(httpResponse.statusCode))
+            }
+        } catch {
+            return .failure(error)
+        }
+    }
+    
     // MARK: - MCP Tool Execution
     
     func executeTool(name: String, arguments: [String: Any]) async -> MCPResult {
@@ -664,6 +894,93 @@ struct GitHubLabel: Codable {
     let name: String
     let color: String
     let description: String?
+}
+
+struct GitHubFileResponse: Codable {
+    let content: GitHubFileContent
+    let commit: GitHubFileCommit
+    
+    struct GitHubFileContent: Codable {
+        let name: String
+        let path: String
+        let sha: String
+        let size: Int
+        let url: String
+        let htmlUrl: String
+        let gitUrl: String
+        let downloadUrl: String?
+        let type: String
+        let content: String?
+        let encoding: String?
+        
+        enum CodingKeys: String, CodingKey {
+            case name, path, sha, size, url, type, content, encoding
+            case htmlUrl = "html_url"
+            case gitUrl = "git_url"
+            case downloadUrl = "download_url"
+        }
+    }
+    
+    struct GitHubFileCommit: Codable {
+        let sha: String
+        let url: String
+        let htmlUrl: String
+        let author: GitHubCommitAuthor
+        let committer: GitHubCommitAuthor
+        let message: String
+        
+        enum CodingKeys: String, CodingKey {
+            case sha, url, message, author, committer
+            case htmlUrl = "html_url"
+        }
+    }
+}
+
+struct GitHubPullRequest: Codable {
+    let id: Int
+    let number: Int
+    let title: String
+    let body: String?
+    let state: String
+    let htmlUrl: String
+    let createdAt: String
+    let updatedAt: String
+    let user: GitHubUser
+    let head: GitHubPRBranch
+    let base: GitHubPRBranch
+    
+    enum CodingKeys: String, CodingKey {
+        case id, number, title, body, state, user, head, base
+        case htmlUrl = "html_url"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct GitHubPRBranch: Codable {
+    let label: String
+    let ref: String
+    let sha: String
+    let user: GitHubUser?
+    let repo: GitHubRepository?
+}
+
+struct GitHubRepositoryInfo: Codable {
+    let id: Int
+    let name: String
+    let fullName: String
+    let isPrivate: Bool
+    let defaultBranch: String
+    let description: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case fullName = "full_name"
+        case isPrivate = "private"
+        case defaultBranch = "default_branch"
+        case description
+    }
 }
 
 enum GitHubMCPError: LocalizedError {

@@ -148,3 +148,161 @@ struct GitHubIssueRequest: Codable {
         self.assignees = assignees
     }
 }
+
+// MARK: - Interactive Fix Structures
+
+struct IssueAnalysis {
+    let filePath: String?
+    let lineNumber: Int?
+    let issueType: String
+    let issueMessage: String?
+    let suggestion: String?
+    let needsMoreInfo: Bool
+    let questions: [String]
+}
+
+struct GeneratedFix {
+    let filePath: String
+    let originalContent: String
+    let fixedContent: String
+    let diff: String
+    let description: String
+    let commitMessage: String
+    let success: Bool
+}
+
+struct InteractiveFixResult {
+    let status: InteractiveFixStatus
+    let questions: [String]
+    let pullRequest: PullRequest
+    let issueAnalysis: IssueAnalysis?
+    let generatedFix: GeneratedFix?
+    let fixPR: PullRequest?
+}
+
+enum InteractiveFixStatus {
+    case needsMoreInfo
+    case completed
+    case failed
+}
+
+// MARK: - GitHub API Structures
+
+struct GitHubContent: Codable {
+    let content: String
+    let encoding: String
+    let size: Int
+    let sha: String
+    let url: String
+}
+
+struct GitHubRef: Codable {
+    let ref: String
+    let nodeId: String?
+    let url: String
+    let object: GitHubRefObject
+    
+    enum CodingKeys: String, CodingKey {
+        case ref, url, object
+        case nodeId = "node_id"
+    }
+}
+
+struct GitHubRefObject: Codable {
+    let sha: String
+    let type: String
+    let url: String
+}
+
+struct GitHubBlob: Codable {
+    let sha: String
+    let nodeId: String?
+    let size: Int?
+    let url: String
+    let content: String?
+    let encoding: String?
+    
+    enum CodingKeys: String, CodingKey {
+        case sha, size, url, content, encoding
+        case nodeId = "node_id"
+    }
+}
+
+struct GitHubTree: Codable {
+    let sha: String
+    let url: String
+    let tree: [GitHubTreeItem]
+    let truncated: Bool
+}
+
+struct GitHubTreeItem: Codable {
+    let path: String
+    let mode: String
+    let type: String
+    let sha: String
+    let size: Int?
+    let url: String?
+}
+
+struct GitHubCommit: Codable {
+    let sha: String
+    let nodeId: String?
+    let commit: GitHubCommitDetails?
+    let url: String
+    let htmlUrl: String?
+    let commentsUrl: String?
+    let author: GitHubCommitAuthor?
+    let committer: GitHubCommitAuthor?
+    let parents: [GitHubCommitParent]
+    
+    enum CodingKeys: String, CodingKey {
+        case sha, commit, url, author, committer, parents
+        case nodeId = "node_id"
+        case htmlUrl = "html_url"
+        case commentsUrl = "comments_url"
+    }
+}
+
+struct GitHubCommitDetails: Codable {
+    let author: GitHubCommitAuthor
+    let committer: GitHubCommitAuthor
+    let message: String
+    let tree: GitHubCommitTree
+    let url: String
+    let commentCount: Int
+    let verification: GitHubCommitVerification
+    
+    enum CodingKeys: String, CodingKey {
+        case author, committer, message, tree, url, verification
+        case commentCount = "comment_count"
+    }
+}
+
+struct GitHubCommitAuthor: Codable {
+    let name: String?
+    let email: String?
+    let date: String?
+}
+
+struct GitHubCommitTree: Codable {
+    let sha: String
+    let url: String
+}
+
+struct GitHubCommitVerification: Codable {
+    let verified: Bool
+    let reason: String
+    let signature: String?
+    let payload: String?
+}
+
+struct GitHubCommitParent: Codable {
+    let sha: String
+    let url: String
+    let htmlUrl: String
+    
+    enum CodingKeys: String, CodingKey {
+        case sha, url
+        case htmlUrl = "html_url"
+    }
+}
