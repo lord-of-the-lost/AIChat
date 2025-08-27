@@ -163,6 +163,19 @@ final class ChatService {
             response += "\n\n"
         }
         
+        // Добавляем информацию о том, что файл готов к использованию
+        if result.status == .success && !result.createdFiles.isEmpty {
+            response += """
+            🚀 Файл готов к использованию!
+            
+            💡 Что дальше:
+            - Файл создан и готов к работе
+            - Для GitHub Actions: при следующем push будет запущена автоматическая сборка
+            - Для других файлов: можете сразу использовать созданный контент
+            
+            """
+        }
+        
         response += result.message
         
         return response
