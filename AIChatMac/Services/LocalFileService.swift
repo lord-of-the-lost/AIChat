@@ -116,11 +116,39 @@ class LocalFileService {
         
         // Отправляем запрос к AI
         if let aiResponse = await aiService.sendDirectMessage([message]) {
-            return aiResponse
+            // Постобработка: убираем комментарии и лишний текст
+            return cleanAIContent(aiResponse)
         } else {
             // Fallback контент если AI не ответил
             return createFallbackContent(issueAnalysis: issueAnalysis, issueDescription: issueDescription)
         }
+    }
+    
+    private func cleanAIContent(_ content: String) -> String {
+        var cleanedContent = content
+        
+        // Убираем комментарии в конце файла
+        let commentPatterns = [
+            "Файл для.*создан.*",
+            "В этом файле.*",
+            "Файл.*успешно создан.*",
+            "Этот файл.*",
+            "Создан.*файл.*",
+            "Файл готов.*",
+            "Готово.*",
+            "Завершено.*"
+        ]
+        
+        for pattern in commentPatterns {
+            if let range = cleanedContent.range(of: pattern, options: [.regularExpression, .caseInsensitive]) {
+                cleanedContent = String(cleanedContent[..<range.lowerBound])
+            }
+        }
+        
+        // Убираем лишние пустые строки в конце
+        cleanedContent = cleanedContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return cleanedContent
     }
     
     private func createAIPrompt(issueAnalysis: String, issueDescription: String, directoryPath: String, projectAnalysis: String) -> String {
@@ -142,14 +170,17 @@ class LocalFileService {
         - НЕ добавляй объяснения после содержимого
         - НЕ используй markdown разметку
         - Файл должен быть готов к использованию
+        - НЕ добавляй никакой текст после содержимого файла
         
         **Для GitHub Actions (ci.yml):**
         - Используй macos-latest для runs-on
+        - Настрой триггеры для ВСЕХ веток (push и pull_request без ограничений по веткам)
         - Адаптируй под конкретный проект на основе анализа выше
         - Используй правильные имена схем и таргетов из проекта
         - Включи шаги для сборки и тестирования конкретного проекта
         - Учти зависимости и структуру проекта
         - Создай рабочий YAML файл
+        - НЕ добавляй комментарии в конец файла
         
         **Для Security файла:**
         - Создай политику безопасности для конкретного типа проекта
@@ -164,7 +195,7 @@ class LocalFileService {
         - Создай руководство по тестированию для конкретного проекта
         - Включи примеры тестов, адаптированные под структуру проекта
         
-        Создай ТОЛЬКО содержимое файла, без комментариев и объяснений.
+        Создай ТОЛЬКО содержимое файла, без комментариев и объяснений. Файл должен заканчиваться содержимым, без дополнительного текста.
         """
     }
     
