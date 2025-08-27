@@ -117,7 +117,14 @@ class LocalFileService {
         // Отправляем запрос к AI
         if let aiResponse = await aiService.sendDirectMessage([message]) {
             // Постобработка: убираем комментарии и лишний текст
-            return cleanAIContent(aiResponse)
+            let cleanedContent = cleanAIContent(aiResponse)
+            
+            // Валидация и исправление YAML для GitHub Actions
+            if issueAnalysis == "github_actions" {
+                return validateAndFixYAML(cleanedContent)
+            }
+            
+            return cleanedContent
         } else {
             // Fallback контент если AI не ответил
             return createFallbackContent(issueAnalysis: issueAnalysis, issueDescription: issueDescription)
@@ -151,6 +158,25 @@ class LocalFileService {
         return cleanedContent
     }
     
+    private func validateAndFixYAML(_ content: String) -> String {
+        var fixedContent = content
+        
+        // Исправляем неправильные триггеры веток - поддерживаем все ветки
+        fixedContent = fixedContent.replacingOccurrences(of: "branches:\\s*\\[\\s*'\\*'\\s*\\]", with: "branches: [ main, develop, day-* ]", options: .regularExpression)
+        
+        // Убираем лишние пробелы в конце строк
+        let lines = fixedContent.components(separatedBy: .newlines)
+        let cleanedLines = lines.map { line in
+            line.trimmingCharacters(in: .whitespaces)
+        }
+        fixedContent = cleanedLines.joined(separator: "\n")
+        
+        // Убираем пустые строки в конце
+        fixedContent = fixedContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return fixedContent
+    }
+    
     private func createAIPrompt(issueAnalysis: String, issueDescription: String, directoryPath: String, projectAnalysis: String) -> String {
         return """
         Ты - эксперт по разработке программного обеспечения. Тебе нужно создать файл для решения следующей проблемы:
@@ -174,13 +200,15 @@ class LocalFileService {
         
         **Для GitHub Actions (ci.yml):**
         - Используй macos-latest для runs-on
-        - Настрой триггеры для ВСЕХ веток (push и pull_request без ограничений по веткам)
+        - Настрой триггеры для ВСЕХ веток: branches: [ main, develop, day-* ]
+        - Поддерживай ветки по дням (day-1, day-2, day-17, и т.д.)
         - Адаптируй под конкретный проект на основе анализа выше
         - Используй правильные имена схем и таргетов из проекта
         - Включи шаги для сборки и тестирования конкретного проекта
         - Учти зависимости и структуру проекта
-        - Создай рабочий YAML файл
+        - Создай рабочий YAML файл с правильным синтаксисом
         - НЕ добавляй комментарии в конец файла
+        - Используй актуальные версии actions (actions/checkout@v4, actions/setup-xcode@v2)
         
         **Для Security файла:**
         - Создай политику безопасности для конкретного типа проекта
@@ -270,6 +298,9 @@ class LocalFileService {
                 analysis += "**Swift файлы:** Да\n"
             }
             
+            // Анализируем ветки (если это git репозиторий)
+            analysis += analyzeGitBranches(directoryPath: directoryPath)
+            
             if !dependencies.isEmpty {
                 analysis += "**Зависимости:** \(dependencies.joined(separator: ", "))\n"
             }
@@ -290,6 +321,43 @@ class LocalFileService {
         }
         
         return analysis
+    }
+    
+    private func analyzeGitBranches(directoryPath: String) -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["branch", "-r"]
+        process.currentDirectoryURL = URL(fileURLWithPath: directoryPath)
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                let branches = output.components(separatedBy: .newlines)
+                    .filter { !$0.isEmpty }
+                    .map { $0.trimmingCharacters(in: .whitespaces) }
+                    .filter { $0.hasPrefix("origin/") }
+                    .map { String($0.dropFirst(7)) } // Убираем "origin/"
+                
+                if !branches.isEmpty {
+                    var branchAnalysis = "\n🌿 Найденные ветки:\n"
+                    for branch in branches {
+                        branchAnalysis += "- \(branch)\n"
+                    }
+                    branchAnalysis += "\n📋 Рекомендуемые триггеры: branches: [ main, develop, day-* ]\n"
+                    return branchAnalysis
+                }
+            }
+        } catch {
+            // Игнорируем ошибки git
+        }
+        
+        return "\n📋 Рекомендуемые триггеры: branches: [ main, develop, day-* ]\n"
     }
     
     private func createFallbackContent(issueAnalysis: String, issueDescription: String) -> String {
